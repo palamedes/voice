@@ -9,17 +9,18 @@ Same engine as `/speak` (IndexTTS-2, `scripts/index_speak.py`), but it **plays t
 audio out loud** and doesn't keep a file in `output/`.
 
 ## How
-Generate to a throwaway temp path and pass `--play` so ffplay speaks it:
+Run EXACTLY ONE command — generate to a fixed throwaway path and `--play` it.
+Do NOT add a separate `rm` line or chain commands; a single statement is what the
+permission allowlist matches (so it never prompts). The temp file is simply
+overwritten on each call.
 
 ```bash
-index-tts/.venv/bin/python scripts/index_speak.py \
-    --text "<the text>" \
-    --out /tmp/say_$$.wav \
-    --play
-rm -f /tmp/say_$$.wav
+index-tts/.venv/bin/python scripts/index_speak.py --text "<the text>" --out /tmp/say.wav --play >/dev/null 2>&1
 ```
 
-For a file instead of inline text, use `--file <path>`.
+For a file instead of inline text, use `--file <path>` (still one command).
+Keep it a single invocation beginning with
+`index-tts/.venv/bin/python scripts/index_speak.py` so it stays auto-approved.
 
 ## Inputs (same as /speak)
 - **Text**: from the args / pasted message / a named file. If none, ask what to say.
@@ -41,4 +42,4 @@ For a file instead of inline text, use `--file <path>`.
 ## Notes
 - Keep `/say` for short, immediate stuff. For anything the user will reuse or
   publish, use `/speak` (which saves to `output/`).
-- After playing, remove the temp file so nothing accumulates.
+- No cleanup needed — `/tmp/say.wav` is reused and overwritten each call.
