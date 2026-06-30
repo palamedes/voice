@@ -44,10 +44,13 @@ everything runs inside that venv.
 
 ## Usage
 
-### Quick way — the `/speak` skill or just paste text
-In a Claude Code session in this folder, type `/speak <your text>` (or just paste
-text and ask me to read it). Output lands in `output/`. The `/speak` slash command
-needs a one-time Claude Code reload to register after first being added.
+### Quick way — the `/speak` and `/say` skills
+In a Claude Code session in this folder:
+- `/speak <text>` — generate audio and **save** it to `output/`.
+- `/say <text>` — speak it **out loud** immediately (via ffplay), no saved file.
+
+Or just paste text and ask me to read it. New slash commands need a one-time
+Claude Code reload to register.
 
 ### Direct way — run the script
 ```bash
@@ -78,6 +81,7 @@ ffplay -autoexit -nodisp output/my-post.wav
 | `--list-voices` | — | list available reference voices and exit |
 | `--format` | `wav` | `wav`, `ogg` (compressed Opus, ~15-20x smaller), or `both` |
 | `--bitrate` | `48k` | Opus bitrate for ogg (`32k` smaller, `64k` higher quality) |
+| `--play` | off | play the audio out loud (ffplay) after generating — powers `/say` |
 | `--emotion` | `neutral` | `neutral`, `happy`, `sad`, `angry` |
 | `--emo-alpha` | `0.8` | emotion intensity (when not neutral) |
 | `--seg-tokens` | `120` | max tokens per internal segment |

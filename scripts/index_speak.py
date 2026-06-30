@@ -111,6 +111,7 @@ def main() -> int:
     ap.add_argument("--format", choices=["wav", "ogg", "both"], default="wav",
                     help="Output format. 'ogg' = compressed Opus (~15-20x smaller).")
     ap.add_argument("--bitrate", default="48k", help="Opus bitrate for ogg (e.g. 32k, 48k, 64k).")
+    ap.add_argument("--play", action="store_true", help="Play the audio out loud (ffplay) after generating.")
     ap.add_argument("--no-markdown", action="store_true")
     args = ap.parse_args()
 
@@ -194,6 +195,10 @@ def main() -> int:
     for p in outputs:
         mb = p.stat().st_size / 1048576
         print(f"[index_speak] Done -> {p}  ({mb:.2f} MB)")
+
+    if args.play:
+        print("[index_speak] playing...")
+        subprocess.run(["ffplay", "-autoexit", "-nodisp", "-loglevel", "error", str(outputs[0])])
     return 0
 
 
