@@ -1,0 +1,15 @@
+# Third-party TTS engine + multi-GB model weights — re-install via README
+/index-tts/
+
+# Generated audio (regenerable; keep the folder, ignore its contents)
+/output/*
+!/output/.gitkeep
+
+# Python / virtualenv junk
+__pycache__/
+*.pyc
+.venv/
+.venv-*/
+
+# OS cruft
+.DS_Store
