@@ -18,7 +18,14 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+# IndexTTS-2 internally truncates the speaker reference to 15s, so there's no
+# point feeding it more. We pick which <=15s window to use via --ref-start/--ref-secs.
+MAX_REF_SECS = 15.0
+VOICE_DIRS = ("voice_samples", "voice_samples/processed")
+AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4", ".mov")
 
 ROOT = Path(__file__).resolve().parent.parent
 CKPT = ROOT / "index-tts" / "checkpoints"
@@ -30,6 +37,43 @@ EMOTIONS = {
     "sad":     [0, 0, 0.6, 0, 0, 0.2, 0, 0.1],
     "angry":   [0, 0.6, 0, 0, 0.1, 0, 0, 0.1],
 }
+
+
+def list_voices():
+    """All available reference voices (by name) under the voice dirs."""
+    found = {}
+    for d in VOICE_DIRS:
+        base = ROOT / d
+        if not base.is_dir():
+            continue
+        for f in sorted(base.iterdir()):
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
+                found.setdefault(f.stem, f)  # first dir wins; processed is secondary
+    return found
+
+
+def resolve_ref(ref, voice):
+    """Return a reference audio Path from an explicit --ref or a --voice name."""
+    if ref:
+        p = Path(ref)
+        return p if p.exists() else None
+    voices = list_voices()
+    if voice:
+        return voices.get(voice)
+    return voices.get("conversational")  # default voice
+
+
+def trim_ref(src: Path, start: float, secs):
+    """Cut [start, start+secs] from src into a temp 24k mono wav. Returns its path."""
+    tmp = Path(tempfile.mkdtemp(prefix="indexref_")) / "ref.wav"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    if start and start > 0:
+        cmd += ["-ss", str(start)]
+    if secs:
+        cmd += ["-t", str(secs)]
+    cmd += ["-i", str(src), "-ac", "1", "-ar", "24000", str(tmp)]
+    subprocess.run(cmd, check=True)
+    return tmp
 
 
 def strip_markdown(text: str) -> str:
@@ -47,13 +91,17 @@ def strip_markdown(text: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Narrate text in a cloned voice (IndexTTS-2).")
-    src = ap.add_mutually_exclusive_group(required=True)
+    src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--file", type=Path)
     src.add_argument("--text", type=str)
     ap.add_argument("--out", type=Path, default=Path("output/index_out.wav"))
-    ap.add_argument("--ref", type=Path,
-                    default=ROOT / "voice_samples" / "processed" / "conversational.wav",
-                    help="Speaker reference clip (single clean clip is best).")
+    ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Default: conversational.")
+    ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
+    ap.add_argument("--ref-start", type=float, default=0.0,
+                    help="Seconds into the reference to start listening (e.g. skip an intro).")
+    ap.add_argument("--ref-secs", type=float, default=None,
+                    help=f"How many seconds of reference to use (max {MAX_REF_SECS:g}; model caps there).")
+    ap.add_argument("--list-voices", action="store_true", help="List available reference voices and exit.")
     ap.add_argument("--emotion", choices=list(EMOTIONS), default="neutral")
     ap.add_argument("--emo-alpha", type=float, default=0.8, help="Emotion intensity if not neutral.")
     ap.add_argument("--seg-tokens", type=int, default=120,
@@ -66,9 +114,36 @@ def main() -> int:
     ap.add_argument("--no-markdown", action="store_true")
     args = ap.parse_args()
 
-    if not args.ref.exists():
-        print(f"ERROR: reference clip not found: {args.ref}", file=sys.stderr)
+    if args.list_voices:
+        voices = list_voices()
+        print("Available reference voices:")
+        for name, path in voices.items():
+            print(f"  {name:28s} {path.relative_to(ROOT)}")
+        return 0
+
+    if args.text is None and args.file is None:
+        print("ERROR: provide --text or --file (or --list-voices).", file=sys.stderr)
         return 1
+
+    base_ref = resolve_ref(args.ref, args.voice)
+    if base_ref is None:
+        which = args.ref or args.voice or "conversational"
+        print(f"ERROR: reference voice not found: {which}  (try --list-voices)", file=sys.stderr)
+        return 1
+
+    # Pick the requested window of the reference. Warn if asking for more than the
+    # model will actually use.
+    if args.ref_secs and args.ref_secs > MAX_REF_SECS:
+        print(f"[index_speak] note: --ref-secs {args.ref_secs:g} exceeds the {MAX_REF_SECS:g}s "
+              f"model cap; using {MAX_REF_SECS:g}s.")
+        args.ref_secs = MAX_REF_SECS
+    if args.ref_start > 0 or args.ref_secs:
+        ref_path = trim_ref(base_ref, args.ref_start, args.ref_secs)
+        win = f"{args.ref_start:g}s..{args.ref_start + (args.ref_secs or MAX_REF_SECS):g}s"
+        print(f"[index_speak] reference: {base_ref.name} [{win}]")
+    else:
+        ref_path = base_ref
+        print(f"[index_speak] reference: {base_ref.name} (first {MAX_REF_SECS:g}s)")
 
     raw = args.text if args.text is not None else args.file.read_text(encoding="utf-8")
     text = raw if args.no_markdown else strip_markdown(raw)
@@ -92,7 +167,7 @@ def main() -> int:
     wav_path = args.out.with_suffix(".wav")
     emo_vector = EMOTIONS[args.emotion]
     tts.infer(
-        spk_audio_prompt=str(args.ref),
+        spk_audio_prompt=str(ref_path),
         text=text,
         output_path=str(wav_path),
         emo_vector=emo_vector,

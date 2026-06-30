@@ -71,7 +71,11 @@ ffplay -autoexit -nodisp output/my-post.wav
 |------|---------|---------|
 | `--file` / `--text` | — | input post file, or inline text (markdown auto-stripped) |
 | `--out` | `output/index_out.wav` | output path |
-| `--ref` | `voice_samples/processed/conversational.wav` | speaker reference (one clean clip is best) |
+| `--voice` | `conversational` | reference voice by name (see `--list-voices`) |
+| `--ref` | — | explicit reference clip path (overrides `--voice`) |
+| `--ref-start` | `0` | seconds into the reference to start listening (skip an intro) |
+| `--ref-secs` | (whole) | seconds of reference to use — **max 15** (model caps there) |
+| `--list-voices` | — | list available reference voices and exit |
 | `--format` | `wav` | `wav`, `ogg` (compressed Opus, ~15-20x smaller), or `both` |
 | `--bitrate` | `48k` | Opus bitrate for ogg (`32k` smaller, `64k` higher quality) |
 | `--emotion` | `neutral` | `neutral`, `happy`, `sad`, `angry` |
@@ -86,6 +90,16 @@ index-tts/.venv/bin/python scripts/index_speak.py \
     --file posts/my-post.md --out output/my-post.wav --format both
 ```
 Roughly a 3.5-minute post → ~3 min generation, a full WAV plus a ~1 MB `.ogg`.
+
+Example — pick a voice and which 15s window of it to clone:
+```bash
+index-tts/.venv/bin/python scripts/index_speak.py --list-voices
+index-tts/.venv/bin/python scripts/index_speak.py \
+    --voice ryan-reynolds --ref-start 30 --ref-secs 12 \
+    --text "Cloned from a chosen slice of the reference." --out output/demo.wav
+```
+The reference is capped at **15 seconds** — anything longer is ignored — but
+`--ref-start` lets you choose *which* window (e.g. skip an intro).
 
 ---
 

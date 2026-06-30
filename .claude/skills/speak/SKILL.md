@@ -16,6 +16,12 @@ reference is a single clean clip (`voice_samples/processed/conversational.wav`).
 ## Inputs
 - **Text**: from the skill args, the pasted message, or a file the user names
   (e.g. `posts/foo.md`). If none present, ask: "What text should I read?"
+- **Reference voice** (which voice to clone): `--voice NAME` (run
+  `--list-voices` to see them; default `conversational`). The user can say e.g.
+  "use the palamedes voice". For a window of a longer clip: `--ref-start SECS`
+  (where to start) and `--ref-secs SECS` (how long; **max 15s** — the model caps
+  there). Or `--ref PATH` for an explicit file. Example: "use ryan-reynolds,
+  start at 30 seconds, listen for 12" → `--voice ryan-reynolds --ref-start 30 --ref-secs 12`.
 - **Format**: default wav. If the user wants a small file, add `--format ogg`
   (Opus, ~15-20x smaller) or `--format both`. Bitrate via `--bitrate 48k`.
 - **Delivery** (only if asked): `--emotion neutral|happy|sad|angry` (+ `--emo-alpha`),
