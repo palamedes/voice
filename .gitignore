@@ -11,5 +11,8 @@ __pycache__/
 .venv/
 .venv-*/
 
+# Personal/local Claude Code settings (machine-specific permission grants)
+.claude/settings.local.json
+
 # OS cruft
 .DS_Store

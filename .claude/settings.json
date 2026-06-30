@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(index-tts/.venv/bin/python scripts/index_speak.py:*)",
+      "Bash(rm -f /tmp/say_:*)"
+    ]
+  }
+}

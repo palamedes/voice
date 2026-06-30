@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(index-tts/.venv/bin/python scripts/index_speak.py --voice jason-ellis-conversational --ref-start 2 --ref-secs 8 --text 'Testing a custom reference window in my own voice.' --out output/refwindow_test.wav)",
-      "Bash(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 output/refwindow_test.wav)"
-    ]
-  }
-}
