@@ -28,9 +28,17 @@ For a file instead of inline text, use `--file <path>`.
 - **Delivery**: `--emotion neutral|happy|sad|angry`, `--seg-tokens`, `--gap-ms`.
 - Do NOT use `--format ogg` here (no point — it's not being saved).
 
+## Be quiet — this is the most important rule
+`/say` should feel like the computer just talking. Minimize all chatter:
+- Do NOT preface with "I'll say X out loud" or narrate what you're about to do.
+- Do NOT confirm afterward ("Said it!", "Done", "Did you hear it?") or ask any
+  follow-up questions. No summaries, no emoji, no recap.
+- Run the command, let the voice play, and stop. Ideally reply with nothing more
+  than a brief acknowledgement only if something went wrong.
+- The ONLY time to speak up is on failure (e.g. no audio device) — then say one
+  short line and fall back to `/speak` with the saved path.
+
 ## Notes
 - Keep `/say` for short, immediate stuff. For anything the user will reuse or
   publish, use `/speak` (which saves to `output/`).
-- ffplay plays on the user's machine. If there's no audio output available, fall
-  back to `/speak` and tell the user the saved path so they can play it themselves.
 - After playing, remove the temp file so nothing accumulates.
