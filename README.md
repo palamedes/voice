@@ -26,15 +26,30 @@ uninstalled; IndexTTS-2 is the only engine.
 
 ---
 
+## Two engines: cloned voice vs. fast canned voice
+
+- **`/speak` and `/say`** — IndexTTS-2, clones Jason's actual voice. High
+  likeness, but slow (~1 min/paragraph): zero-shot cloning plus a checkpoint
+  reload every run.
+- **`/speak-fast` and `/say-fast`** — Kokoro-82M, a small fast model with
+  built-in canned voices (not a clone of anyone real; default `am_adam`).
+  Generation is close to real-time — use this when speed matters more than
+  it sounding like you.
+
 ## Layout
 
 - `index-tts/`            — the IndexTTS-2 repo, its `.venv`, and `checkpoints/` (5.5 GB)
-- `scripts/index_speak.py`— the narration script (text/post → audio)
+- `kokoro/.venv`          — the Kokoro-82M venv (pip package only, no repo clone needed)
+- `scripts/index_speak.py`— cloned-voice narration script (IndexTTS-2)
+- `scripts/fast_speak.py` — fast canned-voice narration script (Kokoro-82M)
+- `scripts/audio_common.py` — shared helpers (markdown stripping, loudness normalization)
 - `scripts/prep_ref.sh`   — make a clean reference clip from any audio/video
 - `voice_samples/`        — reference voice clips (+ `processed/` normalized versions)
 - `posts/`                — blog posts to read (.md or .txt)
 - `output/`               — generated audio
-- `.claude/skills/speak/` — the `/speak` skill (this project only)
+- `say`, `say-fast`       — bash wrappers for speaking text out loud from a terminal
+- `.claude/skills/speak/`, `.claude/skills/say/` — the `/speak` and `/say` skills (this project only)
+- `.claude/skills/speak-fast/`, `.claude/skills/say-fast/` — the `/speak-fast` and `/say-fast` skills (this project only)
 
 Environment: Python venv at `index-tts/.venv` (managed by `uv`), PyTorch
 2.8 + CUDA 12.8. The system Python (3.14) is too new for PyTorch, which is why
@@ -44,13 +59,25 @@ everything runs inside that venv.
 
 ## Usage
 
-### Quick way — the `/speak` and `/say` skills
+### Quick way — Claude Code skills
 In a Claude Code session in this folder:
-- `/speak <text>` — generate audio and **save** it to `output/`.
-- `/say <text>` — speak it **out loud** immediately (via ffplay), no saved file.
+- `/speak <text>` — clone Jason's voice, generate audio, **save** it to `output/`.
+- `/say <text>` — same cloned voice, spoken **out loud** immediately (via ffplay), no saved file.
+- `/speak-fast <text>` — fast canned voice (Kokoro), **save** it to `output/`.
+- `/say-fast <text>` — fast canned voice, spoken **out loud** immediately, no saved file.
 
 Or just paste text and ask me to read it. New slash commands need a one-time
 Claude Code reload to register.
+
+### From a terminal — the `say` / `say-fast` scripts
+No Claude Code needed. From the project directory:
+```bash
+./say "Hello, this is me."          # cloned voice, out loud
+./say-fast "Hello, this is Adam."   # fast canned voice, out loud
+```
+Fish shell functions (`~/.config/fish/functions/say.fish`, `say-fast.fish`) wrap
+these so bare `say <text>` / `say-fast <text>` work from the project directory
+without the `./`.
 
 ### Direct way — run the script
 ```bash
@@ -106,6 +133,33 @@ index-tts/.venv/bin/python scripts/index_speak.py \
 ```
 The reference is capped at **15 seconds** — anything longer is ignored — but
 `--ref-start` lets you choose *which* window (e.g. skip an intro).
+
+---
+
+## Fast narration — Kokoro-82M (no cloning)
+
+For when you want speed over voice likeness:
+
+```bash
+kokoro/.venv/bin/python scripts/fast_speak.py \
+    --file posts/my-post.md --out output/my-post_fast.wav
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--file` / `--text` | — | input post file, or inline text (markdown auto-stripped) |
+| `--out` | `output/fast_out.wav` | output path |
+| `--voice` | `am_adam` | canned voice name (see `--list-voices`) |
+| `--speed` | `1.0` | speech speed multiplier |
+| `--format` | `wav` | `wav`, `ogg`, or `both` |
+| `--play` | off | play out loud (ffplay) after generating |
+| `--normalize` / `--no-normalize` | on | loudness-normalize to a consistent level |
+| `--lufs` | `-16` | target integrated loudness |
+
+None of the Kokoro voices are real people — they're stock synthetic voices
+(named things like `af_heart`, `am_michael`). First run downloads ~330 MB of
+model weights from Hugging Face; after that it's cached. Generation is close
+to real-time (a short blog post renders in a few seconds, not minutes).
 
 ---
 

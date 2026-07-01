@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(index-tts/.venv/bin/python scripts/index_speak.py:*)"
+      "Bash(index-tts/.venv/bin/python scripts/index_speak.py:*)",
+      "Bash(kokoro/.venv/bin/python scripts/fast_speak.py:*)"
     ]
   }
 }

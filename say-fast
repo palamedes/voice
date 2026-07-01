@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# say-fast — speak the given text out loud with the fast, non-cloned Kokoro voice.
+#
+#   ./say-fast hello world
+#   ./say-fast "Punctuation? Quote it, to be safe."
+#
+# Plays through your speakers (ffplay) and saves nothing permanent.
+set -euo pipefail
+
+# Resolve the project dir from this script's location, so it works no matter
+# what the current working directory is.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+text="$*"
+if [ -z "$text" ]; then
+  echo "usage: say-fast <text to speak>" >&2
+  exit 1
+fi
+
+exec "$HERE/kokoro/.venv/bin/python" "$HERE/scripts/fast_speak.py" \
+  --text "$text" --out /tmp/say_fast.wav --play >/dev/null 2>&1
