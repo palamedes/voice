@@ -82,6 +82,8 @@ ffplay -autoexit -nodisp output/my-post.wav
 | `--format` | `wav` | `wav`, `ogg` (compressed Opus, ~15-20x smaller), or `both` |
 | `--bitrate` | `48k` | Opus bitrate for ogg (`32k` smaller, `64k` higher quality) |
 | `--play` | off | play the audio out loud (ffplay) after generating — powers `/say` |
+| `--normalize` / `--no-normalize` | on | loudness-normalize output to a consistent level (fixes voice-to-voice volume swings) |
+| `--lufs` | `-16` | target integrated loudness (broadcast/podcast standard for speech) |
 | `--emotion` | `neutral` | `neutral`, `happy`, `sad`, `angry` |
 | `--emo-alpha` | `0.8` | emotion intensity (when not neutral) |
 | `--seg-tokens` | `120` | max tokens per internal segment |

@@ -14,6 +14,7 @@ Reference voice: a single clean clip works best (default: conversational).
 Emotion (optional): --emotion neutral|happy|sad|angry (subtle by default).
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -76,6 +77,39 @@ def trim_ref(src: Path, start: float, secs):
     return tmp
 
 
+def normalize_loudness(path: Path, target_i: float = -16.0, tp: float = -1.5, lra: float = 11.0):
+    """Two-pass EBU R128 loudness normalization to a fixed target, in place.
+
+    Different reference clips produce very different output volumes; this makes
+    every render land at the same perceived loudness (broadcast/podcast standard).
+    """
+    # Preserve the sample rate (loudnorm otherwise emits 192kHz).
+    sr = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=sample_rate", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True).stdout.strip() or "44100"
+    # Pass 1: measure.
+    p1 = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af",
+         f"loudnorm=I={target_i}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"],
+        capture_output=True, text=True)
+    m = re.search(r"\{[^{}]*\"input_i\".*?\}", p1.stderr, re.DOTALL)
+    if not m:
+        print("[index_speak] loudness measure failed; leaving volume as-is.", file=sys.stderr)
+        return
+    d = json.loads(m.group(0))
+    # Pass 2: apply with measured values.
+    flt = (f"loudnorm=I={target_i}:TP={tp}:LRA={lra}:"
+           f"measured_I={d['input_i']}:measured_TP={d['input_tp']}:"
+           f"measured_LRA={d['input_lra']}:measured_thresh={d['input_thresh']}:"
+           f"offset={d['target_offset']}:linear=false")
+    tmp = path.with_suffix(".norm.wav")
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
+         "-af", flt, "-ar", sr, str(tmp)], check=True)
+    tmp.replace(path)
+
+
 def strip_markdown(text: str) -> str:
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
@@ -112,6 +146,9 @@ def main() -> int:
                     help="Output format. 'ogg' = compressed Opus (~15-20x smaller).")
     ap.add_argument("--bitrate", default="48k", help="Opus bitrate for ogg (e.g. 32k, 48k, 64k).")
     ap.add_argument("--play", action="store_true", help="Play the audio out loud (ffplay) after generating.")
+    ap.add_argument("--normalize", action=argparse.BooleanOptionalAction, default=True,
+                    help="Loudness-normalize output to a consistent level (default on).")
+    ap.add_argument("--lufs", type=float, default=-16.0, help="Target integrated loudness (LUFS).")
     ap.add_argument("--no-markdown", action="store_true")
     args = ap.parse_args()
 
@@ -178,6 +215,9 @@ def main() -> int:
         max_text_tokens_per_segment=args.seg_tokens,
         verbose=False,
     )
+
+    if args.normalize:
+        normalize_loudness(wav_path, target_i=args.lufs)
 
     outputs = [wav_path]
     if args.format in ("ogg", "both"):
