@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# merge — merge two audio clips into one, with a natural pause at the seam.
+#
+#   ./merge output/intro.wav output/body.wav --out output/combined.wav
+#   ./merge output/a.ogg output/b.ogg --gap-ms 700 --out output/combined.ogg
+#
+# Trims each clip's existing edge silence and inserts one consistent gap
+# (default ~450ms, a natural sentence-to-sentence pause) instead of stacking
+# silence on silence or cutting straight from one clip into the next.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: merge <clip_a> <clip_b> [--out PATH] [--gap-ms MS] [--format wav|ogg|both]" >&2
+  exit 1
+fi
+
+exec python3 "$HERE/scripts/merge_audio.py" "$@"
