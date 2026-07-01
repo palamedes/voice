@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# speak-fast — narrate the given text with the fast, non-cloned Kokoro voice and save it to output/.
+#
+#   ./speak-fast hello world
+#   ./speak-fast "Punctuation? Quote it, to be safe."
+#
+# Saves a wav to output/ and prints the path. Doesn't play it — use ./say-fast for that.
+set -euo pipefail
+
+# Resolve the project dir from this script's location, so it works no matter
+# what the current working directory is.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+text="$*"
+if [ -z "$text" ]; then
+  echo "usage: speak-fast <text to narrate>" >&2
+  exit 1
+fi
+
+out="$HERE/output/speak-fast_$(date +%Y%m%d_%H%M%S).wav"
+
+exec "$HERE/kokoro/.venv/bin/python" "$HERE/scripts/fast_speak.py" \
+  --text "$text" --out "$out"

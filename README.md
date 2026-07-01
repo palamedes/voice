@@ -47,6 +47,7 @@ uninstalled; IndexTTS-2 is the only engine.
 - `voice_samples/`        — reference voice clips (+ `processed/` normalized versions)
 - `posts/`                — blog posts to read (.md or .txt)
 - `output/`               — generated audio
+- `speak`, `speak-fast`   — bash wrappers for saving narration to `output/` from a terminal
 - `say`, `say-fast`       — bash wrappers for speaking text out loud from a terminal
 - `.claude/skills/speak/`, `.claude/skills/say/` — the `/speak` and `/say` skills (this project only)
 - `.claude/skills/speak-fast/`, `.claude/skills/say-fast/` — the `/speak-fast` and `/say-fast` skills (this project only)
@@ -69,15 +70,18 @@ In a Claude Code session in this folder:
 Or just paste text and ask me to read it. New slash commands need a one-time
 Claude Code reload to register.
 
-### From a terminal — the `say` / `say-fast` scripts
+### From a terminal — the `speak` / `say` scripts
 No Claude Code needed. From the project directory:
 ```bash
-./say "Hello, this is me."          # cloned voice, out loud
-./say-fast "Hello, this is Adam."   # fast canned voice, out loud
+./speak "Hello, this is me."        # cloned voice, saved to output/, prints the path
+./say "Hello, this is me."          # cloned voice, out loud, nothing saved
+
+./speak-fast "Hello, this is Adam." # fast canned voice, saved to output/, prints the path
+./say-fast "Hello, this is Adam."   # fast canned voice, out loud, nothing saved
 ```
-Fish shell functions (`~/.config/fish/functions/say.fish`, `say-fast.fish`) wrap
-these so bare `say <text>` / `say-fast <text>` work from the project directory
-without the `./`.
+Fish shell functions (`~/.config/fish/functions/{speak,speak-fast,say,say-fast}.fish`)
+wrap these so bare `speak`/`speak-fast`/`say`/`say-fast <text>` work from the
+project directory without the `./`.
 
 ### Direct way — run the script
 ```bash
