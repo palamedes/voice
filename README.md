@@ -112,7 +112,7 @@ ffplay -autoexit -nodisp output/my-post.wav
 |------|---------|---------|
 | `--file` / `--text` | — | input post file, or inline text (markdown auto-stripped) |
 | `--out` | `output/index_out.wav` | output path |
-| `--voice` | `conversational` | reference voice by name (see `--list-voices`) |
+| `--voice` | `presenter` | reference voice by name (see `--list-voices`) |
 | `--ref` | — | explicit reference clip path (overrides `--voice`) |
 | `--ref-start` | `0` | seconds into the reference to start listening (skip an intro) |
 | `--ref-secs` | (whole) | seconds of reference to use — **max 15** (model caps there) |
@@ -208,7 +208,7 @@ scripts/prep_ref.sh SOURCE.mp4 0 12 voice_samples/processed/myvoice.wav
 #                    file       ^start ^seconds  ^output
 ```
 Then point at it with `--ref voice_samples/processed/myvoice.wav`. The current
-default is `conversational.wav`.
+default is `presenter.wav`.
 
 ---
 

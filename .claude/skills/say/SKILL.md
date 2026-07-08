@@ -25,7 +25,7 @@ Keep it a single invocation beginning with
 ## Inputs (same as /speak)
 - **Text**: from the args / pasted message / a named file. If none, ask what to say.
 - **Voice + window**: `--voice NAME` (`--list-voices`), `--ref-start SECS`,
-  `--ref-secs SECS` (max 15s). Default voice `conversational`.
+  `--ref-secs SECS` (max 15s). Default voice `presenter`.
 - **Delivery**: `--emotion neutral|happy|sad|angry`, `--seg-tokens`, `--gap-ms`.
 - Do NOT use `--format ogg` here (no point — it's not being saved).
 

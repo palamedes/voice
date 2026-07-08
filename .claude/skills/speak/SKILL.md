@@ -11,13 +11,13 @@ Generate audio of the user's text in `/home/jellis/Projects/voice`.
 Use `scripts/index_speak.py` (venv: `index-tts/.venv`). It clones Jason's voice
 well AND pronounces correctly (real g2p — fixed the "jarring" problem), and it
 handles long-form segmentation internally (no manual chunk-stitching). Default
-reference is a single clean clip (`voice_samples/processed/conversational.wav`).
+reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 
 ## Inputs
 - **Text**: from the skill args, the pasted message, or a file the user names
   (e.g. `posts/foo.md`). If none present, ask: "What text should I read?"
 - **Reference voice** (which voice to clone): `--voice NAME` (run
-  `--list-voices` to see them; default `conversational`). The user can say e.g.
+  `--list-voices` to see them; default `presenter`). The user can say e.g.
   "use the palamedes voice". For a window of a longer clip: `--ref-start SECS`
   (where to start) and `--ref-secs SECS` (how long; **max 15s** — the model caps
   there). Or `--ref PATH` for an explicit file. Example: "use ryan-reynolds,

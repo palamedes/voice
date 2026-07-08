@@ -10,7 +10,7 @@ Run with the IndexTTS venv:
   index-tts/.venv/bin/python scripts/index_speak.py \
       --file posts/ai-slop-youtube.md --out output/ai-slop-youtube_index.wav
 
-Reference voice: a single clean clip works best (default: conversational).
+Reference voice: a single clean clip works best (default: presenter).
 Emotion (optional): --emotion neutral|happy|sad|angry (subtle by default).
 """
 import argparse
@@ -61,7 +61,7 @@ def resolve_ref(ref, voice):
     voices = list_voices()
     if voice:
         return voices.get(voice)
-    return voices.get("conversational")  # default voice
+    return voices.get("presenter")  # default voice
 
 
 def trim_ref(src: Path, start: float, secs):
@@ -83,7 +83,7 @@ def main() -> int:
     src.add_argument("--file", type=Path)
     src.add_argument("--text", type=str)
     ap.add_argument("--out", type=Path, default=Path("output/index_out.wav"))
-    ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Default: conversational.")
+    ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Default: presenter.")
     ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
     ap.add_argument("--ref-start", type=float, default=0.0,
                     help="Seconds into the reference to start listening (e.g. skip an intro).")
@@ -119,7 +119,7 @@ def main() -> int:
 
     base_ref = resolve_ref(args.ref, args.voice)
     if base_ref is None:
-        which = args.ref or args.voice or "conversational"
+        which = args.ref or args.voice or "presenter"
         print(f"ERROR: reference voice not found: {which}  (try --list-voices)", file=sys.stderr)
         return 1
 
