@@ -17,8 +17,9 @@ reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 - **Text**: from the skill args, the pasted message, or a file the user names
   (e.g. `posts/foo.md`). If none present, ask: "What text should I read?"
 - **Reference voice** (which voice to clone): `--voice NAME` (run
-  `--list-voices` to see them; default `presenter`). The user can say e.g.
-  "use the palamedes voice". For a window of a longer clip: `--ref-start SECS`
+  `--list-voices` to see them; default `presenter`). Any voice name also works
+  as a bare flag: `--calm`, `--muted`, `--presenter`, etc. The user can say e.g.
+  "use the calm voice". For a window of a longer clip: `--ref-start SECS`
   (where to start) and `--ref-secs SECS` (how long; **max 15s** — the model caps
   there). Or `--ref PATH` for an explicit file. Example: "use ryan-reynolds,
   start at 30 seconds, listen for 12" → `--voice ryan-reynolds --ref-start 30 --ref-secs 12`.
@@ -47,7 +48,6 @@ reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 ## Notes
 - Pronunciation is reliable; if a rare word is wrong, IndexTTS-2 supports
   pinyin-style annotation for fixes (see checkpoints/pinyin.vocab) — mainly Chinese.
-- Fallback engines remain installed but are NOT default: Zonos
-  (`scripts/zonos_speak.py`, weaker clone) and F5-TTS (`scripts/blog_to_speech.py`,
-  no pronunciation control). Only use if explicitly asked.
+- F5-TTS and Zonos have been uninstalled; IndexTTS-2 is the only cloning
+  engine. For a fast non-cloned voice use `/speak-fast` (Kokoro-82M).
 - Details + history in README.md / project memory.

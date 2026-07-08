@@ -77,10 +77,12 @@ index-tts/.venv/bin/python scripts/index_speak.py \
 index-tts/.venv/bin/python scripts/index_speak.py \
     --file posts/my-post.md --out output/my-post.wav --format both
 
-# Pick a different reference voice by name
+# Pick a different reference voice by name — any voice in --list-voices also
+# works as a bare flag (--calm, --muted, --presenter, --deadpool, ...)
 index-tts/.venv/bin/python scripts/index_speak.py --list-voices
+./speak --calm "Same me, calmer read."
 index-tts/.venv/bin/python scripts/index_speak.py \
-    --voice calm --text "Same me, calmer read." --out output/demo.wav
+    --voice muted --text "Also fine the long way." --out output/demo.wav
 
 # The reference is capped at 15 seconds — anything past that is silently
 # ignored by the model — but you can choose WHICH 15 seconds. Here: start
@@ -144,7 +146,8 @@ IndexTTS-2 is the only cloning engine.
   --file PATH / --text TEXT   input post file, or inline text (markdown auto-stripped)
   --out PATH                  output path (default: output/index_out.wav)
   --voice NAME                reference voice by name (default: presenter;
-                              see --list-voices)
+                              see --list-voices). Any voice name also works
+                              as a bare flag: --calm, --muted, --presenter, ...
   --ref PATH                  explicit reference clip path (overrides --voice)
   --ref-start SECS            seconds into the reference to start (skip an intro)
   --ref-secs SECS             seconds of reference to use — max 15 (model caps there)

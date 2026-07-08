@@ -2,22 +2,31 @@
 # speak — narrate the given text in Jason's cloned voice and save it to output/.
 #
 #   ./speak hello world
+#   ./speak --calm "A calmer read of the same thing."
 #   ./speak "Punctuation? Quote it, to be safe."
 #
-# Saves a wav to output/ and prints the path. Doesn't play it — use ./say for that.
+# Leading --flags are passed through to index_speak.py; any voice name works
+# as a flag (--calm, --muted, --presenter, ...). Saves a wav to output/ and
+# prints the path. Doesn't play it — use ./say for that.
 set -euo pipefail
 
 # Resolve the project dir from this script's location, so it works no matter
 # what the current working directory is.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
+flags=()
+while [ $# -gt 0 ] && [[ "$1" == --* ]]; do
+  flags+=("$1")
+  shift
+done
+
 text="$*"
 if [ -z "$text" ]; then
-  echo "usage: speak <text to narrate>" >&2
+  echo "usage: speak [--voice-flags] <text to narrate>" >&2
   exit 1
 fi
 
 out="$HERE/output/speak_$(date +%Y%m%d_%H%M%S).wav"
 
 exec "$HERE/index-tts/.venv/bin/python" "$HERE/scripts/index_speak.py" \
-  --text "$text" --out "$out"
+  ${flags[@]+"${flags[@]}"} --text "$text" --out "$out"

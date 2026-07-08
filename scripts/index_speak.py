@@ -53,6 +53,19 @@ def list_voices():
     return found
 
 
+def expand_voice_shorthand(argv):
+    """Allow any voice name as a bare flag: --calm, --presenter, --muted, ...
+    Rewrites them to --voice <name> before argparse sees them."""
+    voices = list_voices()
+    out = []
+    for a in argv:
+        if a.startswith("--") and a[2:] in voices:
+            out += ["--voice", a[2:]]
+        else:
+            out.append(a)
+    return out
+
+
 def resolve_ref(ref, voice):
     """Return a reference audio Path from an explicit --ref or a --voice name."""
     if ref:
@@ -83,7 +96,8 @@ def main() -> int:
     src.add_argument("--file", type=Path)
     src.add_argument("--text", type=str)
     ap.add_argument("--out", type=Path, default=Path("output/index_out.wav"))
-    ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Default: presenter.")
+    ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Any voice name "
+                    "also works as a bare flag, e.g. --calm. Default: presenter.")
     ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
     ap.add_argument("--ref-start", type=float, default=0.0,
                     help="Seconds into the reference to start listening (e.g. skip an intro).")
@@ -104,7 +118,7 @@ def main() -> int:
                     help="Loudness-normalize output to a consistent level (default on).")
     ap.add_argument("--lufs", type=float, default=-16.0, help="Target integrated loudness (LUFS).")
     ap.add_argument("--no-markdown", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(expand_voice_shorthand(sys.argv[1:]))
 
     if args.list_voices:
         voices = list_voices()
