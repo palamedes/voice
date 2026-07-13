@@ -2,22 +2,46 @@
 # speak-fast — narrate the given text with the fast, non-cloned Kokoro voice and save it to output/.
 #
 #   ./speak-fast hello world
-#   ./speak-fast "Punctuation? Quote it, to be safe."
+#   ./speak-fast --voice=af_heart "Same words, different canned voice."
+#   ./speak-fast --file posts/my-post.md
+#   ./speak-fast --list-voices
 #
-# Saves a wav to output/ and prints the path. Doesn't play it — use ./say-fast for that.
+# Two modes:
+#   * Plain text: leading --flags are passed through to fast_speak.py, the
+#     rest is the text.
+#   * If the args carry their own input (--file, --text, --list-voices),
+#     everything is passed through verbatim, so all fast_speak.py flags work.
+# Saves a wav to output/ (unless you pass your own --out) and prints the path.
+# Doesn't play it — use ./say-fast for that.
 set -euo pipefail
 
 # Resolve the project dir from this script's location, so it works no matter
 # what the current working directory is.
 HERE="$(cd "$(dirname "$0")" && pwd)"
+PY="$HERE/kokoro/.venv/bin/python"
+SCRIPT="$HERE/scripts/fast_speak.py"
+out="$HERE/output/speak-fast_$(date +%Y%m%d_%H%M%S).wav"
+
+# Pass-through mode. The default --out goes first so a user-supplied --out
+# later in the args wins (argparse keeps the last occurrence).
+for a in "$@"; do
+  case "$a" in
+    --file|--file=*|--text|--text=*|--list-voices)
+      exec "$PY" "$SCRIPT" --out "$out" "$@" ;;
+  esac
+done
+
+# Plain-text mode.
+flags=()
+while [ $# -gt 0 ] && [[ "$1" == --* ]]; do
+  flags+=("$1")
+  shift
+done
 
 text="$*"
 if [ -z "$text" ]; then
-  echo "usage: speak-fast <text to narrate>" >&2
+  echo "usage: speak-fast [--flags] <text to narrate>" >&2
   exit 1
 fi
 
-out="$HERE/output/speak-fast_$(date +%Y%m%d_%H%M%S).wav"
-
-exec "$HERE/kokoro/.venv/bin/python" "$HERE/scripts/fast_speak.py" \
-  --text "$text" --out "$out"
+exec "$PY" "$SCRIPT" --out "$out" ${flags[@]+"${flags[@]}"} --text "$text"
