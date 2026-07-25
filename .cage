@@ -1,0 +1,4 @@
+
+## 2026-07-25
+_Built "Jarvis mode": scripts/voice_daemon.py keeps Kokoro-82M warm behind a Unix socket and streams speech sentence-by-sentence; ./say-fast (and new ./jarvis alias) now route through it. Warm latency measured at ~0.13s client return / ~0.4s to first audio (vs ~15s cold). New say interrupts current speech; --stop/--status/--quit/--wait supported. Updated /say-fast skill + README; rebuilt kokoro/.venv in-container to test. TODO: optionally pre-warm the daemon at login on the host (systemd user unit)._
+— cage: pushed main (3b7ace7); 1 commit(s), 5 file(s)
