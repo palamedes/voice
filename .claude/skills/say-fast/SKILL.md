@@ -1,31 +1,37 @@
 ---
 name: say-fast
-description: Speak text OUT LOUD with the fast, non-cloned Kokoro-82M voice (this voice project only) — like /say, but uses /speak-fast's engine instead of the cloned voice. Use when the user says "/say-fast" or wants to hear the fast/canned voice immediately rather than get a file.
+description: Speak text OUT LOUD with the fast, non-cloned Kokoro-82M voice (this voice project only) — like /say, but near-instant via the warm voice daemon. Use when the user says "/say-fast", "/jarvis", or wants to hear the fast/canned voice immediately rather than get a file.
 ---
 
-# say-fast — speak text out loud with the fast canned voice (no saved file)
+# say-fast — speak text out loud, near-instantly (no saved file)
 
-Same engine as `/speak-fast` (Kokoro-82M, `scripts/fast_speak.py`), but it
-**plays the audio out loud** and doesn't keep a file in `output/`.
+Speaks through the resident voice daemon (`scripts/voice_daemon.py`, Kokoro-82M).
+The first call auto-starts the daemon (one-time model load, ~10s); every call
+after that starts talking in well under a second. Nothing is saved.
 
 ## How
-Run EXACTLY ONE command — generate to a fixed throwaway path and `--play` it.
-Do NOT add a separate `rm` line or chain commands; a single statement is what the
-permission allowlist matches (so it never prompts). The temp file is simply
-overwritten on each call.
+Run EXACTLY ONE command. Do NOT chain commands; a single statement is what the
+permission allowlist matches (so it never prompts).
 
 ```bash
-kokoro/.venv/bin/python scripts/fast_speak.py --text "<the text>" --out /tmp/say_fast.wav --play >/dev/null 2>&1
+kokoro/.venv/bin/python scripts/voice_daemon.py --text "<the text>"
 ```
 
 For a file instead of inline text, use `--file <path>` (still one command).
 Keep it a single invocation beginning with
-`kokoro/.venv/bin/python scripts/fast_speak.py` so it stays auto-approved.
+`kokoro/.venv/bin/python scripts/voice_daemon.py` so it stays auto-approved.
 
-## Inputs (same as /speak-fast)
+The command returns as soon as the daemon starts speaking (it keeps talking in
+the background). Add `--wait` only if you need to block until playback ends
+(e.g. before playing something else).
+
+## Inputs
 - **Text**: from the args / pasted message / a named file. If none, ask what to say.
 - **Voice**: `--voice NAME` (`--list-voices`). Default `am_adam`.
 - **Speed**: `--speed 1.2` etc.
+- **Interrupt**: `--stop` cuts off whatever it's currently saying. A new say
+  also interrupts the current one automatically.
+- **Shutdown**: `--quit` stops the daemon (frees the model from RAM).
 
 ## Be quiet — this is the most important rule
 `/say-fast` should feel like the computer just talking. Minimize all chatter:
@@ -40,4 +46,4 @@ Keep it a single invocation beginning with
 ## Notes
 - Keep `/say-fast` for short, immediate stuff. For anything the user will reuse
   or publish, use `/speak-fast` (which saves to `output/`).
-- No cleanup needed — `/tmp/say_fast.wav` is reused and overwritten each call.
+- Daemon log: `/tmp/voice_daemon.log` (check it if the daemon won't start).

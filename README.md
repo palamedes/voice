@@ -19,12 +19,33 @@ Only clone your own voice, or someone who has explicitly said yes.
 ./speak "Hello, this is me."          # cloned voice → saved to output/
 ./say "Hello, this is me."            # cloned voice → out loud, nothing saved
 ./speak-fast "Hi, this is Adam."      # fast voice → saved to output/
-./say-fast "Hi, this is Adam."        # fast voice → out loud
+./say-fast "Hi, this is Adam."        # fast voice → out loud, near-instant
 ```
 
 All four also exist as slash commands in a Claude Code session in this folder
 (`/speak`, `/say`, `/speak-fast`, `/say-fast`, plus `/merge`), and as fish
 functions so the bare names work without `./`.
+
+## Jarvis mode
+
+`./say-fast` (alias `./jarvis`) talks through a resident voice daemon instead
+of cold-starting the model every time. The first call boots the daemon
+(one-time model load, ~10 s); after that, speech starts in well under a second
+— it streams sentence-by-sentence, so the first sentence plays while the rest
+is still generating.
+
+```sh
+./jarvis "Good evening, sir."          # speaks almost immediately (warm)
+./jarvis "Actually, cancel that."      # interrupts what it was saying
+./jarvis --stop                        # just shut it up
+./jarvis --status                      # is the daemon up?
+./jarvis --quit                        # stop the daemon, free the RAM
+```
+
+The daemon (`scripts/voice_daemon.py`) listens on a Unix socket
+(`/tmp/voice_daemon.sock`, log at `/tmp/voice_daemon.log`) and holds
+Kokoro-82M warm. Saved-file output (`./speak-fast`) still uses the one-shot
+path, which keeps the two-pass loudness normalization.
 
 ## Voices
 
@@ -132,6 +153,11 @@ so every clip comes out at the same volume.
 `--file/--text/--out/--format/--play` flags, plus `--voice` (default
 `am_adam`, see `--list-voices`) and `--speed` (default 1.0).
 
+`./say-fast` / `./jarvis` (`scripts/voice_daemon.py`, warm daemon):
+`--voice/--speed/--file/--text` as above, plus `--stop` (interrupt),
+`--wait` (block until playback ends), `--status`, `--quit`, and `--serve`
+(run the daemon in the foreground).
+
 `./merge` (`scripts/merge_audio.py`): `--gap-ms` sets the pause at the seam
 (default 450, a sentence-to-sentence pause; ~700+ for a paragraph break).
 
@@ -147,9 +173,10 @@ so every clip comes out at the same volume.
 ## Layout
 
 ```
-speak, say, speak-fast, say-fast, merge    bash wrappers (see above)
+speak, say, speak-fast, say-fast, jarvis, merge    bash wrappers (see above)
 scripts/index_speak.py    cloned-voice narration (IndexTTS-2)
 scripts/fast_speak.py     fast canned-voice narration (Kokoro-82M)
+scripts/voice_daemon.py   warm Kokoro daemon behind say-fast/jarvis
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization)

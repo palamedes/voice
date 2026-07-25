@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# jarvis — near-instant speech via the warm voice daemon (Kokoro-82M).
+#
+#   ./jarvis "Good evening, sir."         # speaks almost immediately (warm)
+#   ./jarvis --voice=bm_george "Indeed."  # any canned voice
+#   ./jarvis --stop                       # interrupt whatever it's saying
+#   ./jarvis --status                     # is the daemon up?
+#   ./jarvis --quit                       # shut the daemon down
+#
+# First call auto-starts the daemon (one-time model load, ~10s); every call
+# after that starts speaking in well under a second. A new ./jarvis while it's
+# talking interrupts it — like talking over Jarvis.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PY="$HERE/kokoro/.venv/bin/python"
+exec "$PY" "$HERE/scripts/voice_daemon.py" "$@"
