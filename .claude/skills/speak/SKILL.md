@@ -10,7 +10,7 @@ Generate audio of the user's text in `/home/jellis/Projects/voice`.
 ## Default engine: IndexTTS-2 (the winner)
 Use `scripts/index_speak.py` (venv: `index-tts/.venv`). It clones Jason's voice
 well AND pronounces correctly (real g2p — fixed the "jarring" problem), and it
-handles long-form segmentation internally (no manual chunk-stitching). Default
+is fed one sentence / marked phrase at a time with explicit pauses between. Default
 reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 
 ## Inputs
@@ -26,7 +26,17 @@ reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 - **Format**: default wav. If the user wants a small file, add `--format ogg`
   (Opus, ~15-20x smaller) or `--format both`. Bitrate via `--bitrate 48k`.
 - **Delivery** (only if asked): `--emotion neutral|happy|sad|angry` (+ `--emo-alpha`),
-  `--seg-tokens` (lower = safer segmentation), `--gap-ms` (silence between segments).
+  `--rate 0.9` (slower, pitch kept), `--sentence-gap`/`--para-gap`/`--breath-gap` (ms).
+- **Pacing marks** in the text are the user's control over breaths — preserve them
+  verbatim when writing the text to `posts/`: `,,,` = breathe here, `[breath]`,
+  `[pause]` (0.7s), `[pause 1.5]` / `[pause 800ms]`. Blank lines = paragraph pause.
+  `--my-breaths` = pause ONLY at those marks and at line breaks (every line break
+  is a breath and they stack — an empty line = 2 breaths; a mark at a line end
+  stands in for that line's first break; no automatic sentence/paragraph pauses,
+  and the model's own mid-phrase pauses are cut to 0.1s) — so keep the user's
+  line breaks and blank lines exactly when writing text to `posts/`.
+  `--auto-breaths` is the default.
+  `--dry-run` prints the chunks + pauses without rendering.
 
 ## Steps
 1. If the text is more than a sentence or two, write it to `posts/<slug>.md`

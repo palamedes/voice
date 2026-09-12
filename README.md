@@ -127,6 +127,54 @@ Input can be `--text "..."` or `--file post.md`; markdown is stripped
 automatically. Output is loudness-normalized to -16 LUFS (podcast standard)
 so every clip comes out at the same volume.
 
+## Pacing: pauses and breaths
+
+The cloned voice reads one sentence at a time, with a real pause after each
+(0.45 s) and a longer one at each blank line between paragraphs (0.9 s). To
+control exactly where it breathes, mark it up in the text:
+
+```
+I built it in a weekend,,, then it broke.     ,,,  breathe here (0.4 s)
+That was the end. [pause 2] Or so I thought.  [pause 2]  2 seconds; also 1.5s, 800ms
+Wait for it [pause] there it is.              [pause]  0.7 s
+```
+
+A mark replaces the automatic pause at that spot; back-to-back marks add up.
+Check where the breaks will fall before a long render with `--dry-run` (it
+prints the chunks and pauses without loading the model).
+
+```sh
+./speak --file posts/my-post.md --dry-run          # preview the breaks
+./speak --rate=0.9 "Ten percent slower, same pitch."
+./speak --file posts/my-post.md --sentence-gap 600 --para-gap 1200 --breath-gap 400
+```
+
+In plain-text mode, flags that take a value need the `=` form (`--rate=0.9`).
+
+### Your breaths only
+
+By default the sentence and paragraph pauses are automatic, with your marks on
+top. To pause *only* where you put a mark, add `--my-breaths`: no automatic
+pauses at all, and each stretch between marks is read straight through in one
+go. `--auto-breaths` (the default) switches back.
+
+With `--my-breaths`, every line break also counts as a breath, so you can put
+each breath group on its own line instead of typing `,,,` at the end of every
+one. They add up: one line break is 0.4 s, an empty line between two lines is
+0.8 s, two empty lines 1.2 s, and so on. A mark at the end of a line stands in
+for that line's first break (`text ,,,` then one line break is still 0.4 s).
+(If a file is hard-wrapped, every wrap becomes a breath too.)
+
+```sh
+./speak --my-breaths "I built it in a weekend,,, then it broke. And I mean broke,,, the whole thing."
+./speak --my-breaths --file posts/my-post.md --dry-run    # see exactly where it will pause
+```
+
+The voice also likes to take little pauses of its own mid-phrase (0.2–0.4 s,
+at random, different every render). With `--my-breaths` those are cut down to
+a tenth of a second, so the only real pauses are the ones you marked. Only
+silence is removed; the voice itself isn't touched.
+
 ## Options reference
 
 `./speak` / `./say` (wrappers around `scripts/index_speak.py`, the cloned voice):
@@ -146,6 +194,14 @@ so every clip comes out at the same volume.
   --lufs N                    target loudness (default -16)
   --emotion NAME              neutral (default), happy, sad, angry
   --emo-alpha A               emotion intensity (default 0.8)
+  --rate R                    speaking rate, pitch kept (0.9 = 10% slower)
+  --sentence-gap / --para-gap / --breath-gap MS
+                              pause after a sentence (450), paragraph (900),
+                              and at each ,,, / [breath] mark (400)
+  --auto-breaths / --my-breaths
+                              automatic sentence/paragraph pauses plus your
+                              marks (default), or pause only at your marks
+  --dry-run                   print the chunks and pauses, don't render
   --fp16                      faster generation in half precision
 ```
 
@@ -179,7 +235,7 @@ scripts/fast_speak.py     fast canned-voice narration (Kokoro-82M)
 scripts/voice_daemon.py   warm Kokoro daemon behind say-fast/jarvis
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
-scripts/audio_common.py   shared helpers (markdown stripping, normalization)
+scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)
 voice_samples/            raw voice recordings (+ processed/ cleaned clips)
 posts/                    blog posts to read (.md or .txt)
 output/                   generated audio

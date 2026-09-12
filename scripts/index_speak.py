@@ -2,9 +2,15 @@
 """
 index_speak.py — narrate text in Jason's cloned voice with IndexTTS-2.
 
-Why IndexTTS-2: strong zero-shot cloning + accurate English pronunciation +
-*built-in* long-form segmentation (no manual chunk-stitching like Zonos needed),
+Why IndexTTS-2: strong zero-shot cloning + accurate English pronunciation,
 plus emotion control decoupled from the speaker.
+
+Pacing: by default (--auto-breaths) text is fed one sentence at a time with real
+pauses between (longer at blank lines), and ,,, / [breath] / [pause N] marks add
+breaks exactly where you want them. With --my-breaths ONLY those marks and line
+breaks pause: no automatic pauses, and the model's own mid-phrase pauses are cut
+down to 0.1 s.
+--dry-run shows the plan.
 
 Run with the IndexTTS venv:
   index-tts/.venv/bin/python scripts/index_speak.py \
@@ -17,10 +23,13 @@ import argparse
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from audio_common import normalize_loudness, strip_markdown
+from audio_common import normalize_loudness, pacing_plan, strip_markdown
 
 # IndexTTS-2 internally truncates the speaker reference to 15s, so there's no
 # point feeding it more. We pick which <=15s window to use via --ref-start/--ref-secs.
@@ -90,6 +99,56 @@ def trim_ref(src: Path, start: float, secs):
     return tmp
 
 
+def trim_edges(audio, sr, floor_db=-40, pad_ms=40):
+    """Cut the model's own leading/trailing silence so the gaps we insert are exact.
+    Quiet = 10 ms frames more than floor_db below the chunk's loudest frame."""
+    hop = sr // 100
+    n = len(audio) // hop
+    if n == 0:
+        return audio
+    peaks = np.abs(audio[:n * hop].astype(np.int32)).reshape(n, hop).max(axis=1)
+    loud = np.flatnonzero(peaks > peaks.max() * 10 ** (floor_db / 20))
+    if not len(loud):
+        return audio
+    pad = sr * pad_ms // 1000
+    return audio[max(0, loud[0] * hop - pad):min(len(audio), (loud[-1] + 1) * hop + pad)]
+
+
+# With --my-breaths, the model's own pauses inside a chunk are cut down to this.
+INNER_PAUSE_MS = 100
+
+
+def tighten_pauses(audio, sr, max_ms=INNER_PAUSE_MS, floor_db=-40):
+    """Shorten silences inside a chunk to max_ms, so the only real pauses are the ones
+    we insert. Only near-silent audio is removed (same 'quiet' test as trim_edges)."""
+    hop = sr // 100
+    n = len(audio) // hop
+    if n == 0:
+        return audio
+    peaks = np.abs(audio[:n * hop].astype(np.int32)).reshape(n, hop).max(axis=1)
+    quiet = peaks <= peaks.max() * 10 ** (floor_db / 20)
+    keep = np.ones(len(audio), dtype=bool)
+    half = max_ms // 20                  # 10 ms frames kept on each side of a cut
+    i = 0
+    while i < n:
+        j = i
+        while j < n and quiet[j]:
+            j += 1
+        if j - i > 2 * half and i > 0 and j < n:   # interior quiet run longer than max_ms
+            keep[(i + half) * hop:(j - half) * hop] = False
+        i = j + 1
+    return audio[keep]
+
+
+def stretch(audio, sr, rate):
+    """Change speaking rate without changing pitch (ffmpeg's rubberband filter)."""
+    out = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le", "-ar", str(sr), "-ac", "1",
+         "-i", "-", "-af", f"rubberband=tempo={rate}", "-f", "s16le", "-"],
+        input=audio.tobytes(), capture_output=True, check=True).stdout
+    return np.frombuffer(out, dtype=np.int16)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Narrate text in a cloned voice (IndexTTS-2).")
     src = ap.add_mutually_exclusive_group(required=False)
@@ -106,9 +165,26 @@ def main() -> int:
     ap.add_argument("--list-voices", action="store_true", help="List available reference voices and exit.")
     ap.add_argument("--emotion", choices=list(EMOTIONS), default="neutral")
     ap.add_argument("--emo-alpha", type=float, default=0.8, help="Emotion intensity if not neutral.")
+    ap.add_argument("--sentence-gap", type=int, default=450, help="Silence after each sentence (ms).")
+    ap.add_argument("--para-gap", type=int, default=900,
+                    help="Silence after each paragraph, i.e. at a blank line (ms).")
+    ap.add_argument("--breath-gap", type=int, default=400,
+                    help="Silence at each ,,, or [breath] mark in the text (ms).")
+    ap.add_argument("--rate", type=float, default=1.0,
+                    help="Speaking rate, e.g. 0.9 = 10%% slower. Pitch is kept; pauses are not stretched.")
+    breaths = ap.add_mutually_exclusive_group()
+    breaths.add_argument("--auto-breaths", dest="auto_breaths", action="store_true", default=True,
+                         help="Pause after every sentence and paragraph, plus at your marks (default).")
+    breaths.add_argument("--my-breaths", dest="auto_breaths", action="store_false",
+                         help="Pause ONLY at your ,,, / [breath] / [pause] marks and line breaks; read the "
+                              "rest straight through (the model's own mid-phrase pauses are cut to 0.1 s).")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Print how the text will be chunked and paused, then exit (no model load).")
     ap.add_argument("--seg-tokens", type=int, default=120,
                     help="Max text tokens per internal segment (lower=safer, more seams).")
-    ap.add_argument("--gap-ms", type=int, default=200, help="Silence between internal segments.")
+    ap.add_argument("--gap-ms", type=int, default=None,
+                    help="Silence where IndexTTS itself splits an overlong chunk "
+                         "(default 200 ms; 0 with --my-breaths).")
     ap.add_argument("--fp16", action="store_true", help="Use fp16 (faster).")
     ap.add_argument("--format", choices=["wav", "ogg", "both"], default="wav",
                     help="Output format. 'ogg' = compressed Opus (~15-20x smaller).")
@@ -157,7 +233,19 @@ def main() -> int:
         print("ERROR: nothing to speak.", file=sys.stderr)
         return 1
 
-    print(f"[index_speak] {len(text)} chars. Loading IndexTTS-2...")
+    # IndexTTS-2 on its own flattens paragraph breaks and packs several sentences
+    # into one generation, so it rushes. Instead we feed it one sentence (or
+    # [pause]-delimited phrase) at a time and insert our own silences. With
+    # --my-breaths only the marks split the text and nothing else is added.
+    plan = pacing_plan(text, sentence_ms=args.sentence_gap, para_ms=args.para_gap,
+                       breath_ms=args.breath_gap, auto=args.auto_breaths)
+    gap_ms = args.gap_ms if args.gap_ms is not None else (200 if args.auto_breaths else 0)
+    if args.dry_run:
+        for chunk, pause_ms in plan:
+            print(f"  {chunk or '(silence)'}\n      ~ {pause_ms} ms")
+        return 0
+
+    print(f"[index_speak] {len(text)} chars, {len(plan)} chunks. Loading IndexTTS-2...")
     from indextts.infer_v2 import IndexTTS2
 
     tts = IndexTTS2(
@@ -172,17 +260,35 @@ def main() -> int:
     # IndexTTS always writes a wav; we transcode to ogg afterward if requested.
     wav_path = args.out.with_suffix(".wav")
     emo_vector = EMOTIONS[args.emotion]
-    tts.infer(
-        spk_audio_prompt=str(ref_path),
-        text=text,
-        output_path=str(wav_path),
-        emo_vector=emo_vector,
-        emo_alpha=(1.0 if emo_vector is None else args.emo_alpha),
-        use_random=False,
-        interval_silence=args.gap_ms,
-        max_text_tokens_per_segment=args.seg_tokens,
-        verbose=False,
-    )
+
+    sr = 22050  # IndexTTS-2 output rate
+    pieces = []
+    for i, (chunk, pause_ms) in enumerate(plan, 1):
+        if chunk:
+            print(f"[index_speak] chunk {i}/{len(plan)}: {chunk[:70]}")
+            sr, audio = tts.infer(
+                spk_audio_prompt=str(ref_path),
+                text=chunk,
+                output_path=None,          # return (sr, int16 samples) instead of writing
+                emo_vector=emo_vector,
+                emo_alpha=(1.0 if emo_vector is None else args.emo_alpha),
+                use_random=False,
+                interval_silence=gap_ms,
+                max_text_tokens_per_segment=args.seg_tokens,
+                verbose=False,
+            )
+            speech = trim_edges(audio[:, 0], sr)
+            if not args.auto_breaths:
+                speech = tighten_pauses(speech, sr)
+            if args.rate != 1.0:
+                speech = stretch(speech, sr, args.rate)
+            pieces.append(speech)
+        pieces.append(np.zeros(sr * pause_ms // 1000, dtype=np.int16))
+    with wave.open(str(wav_path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(np.concatenate(pieces).tobytes())
 
     if args.normalize:
         normalize_loudness(wav_path, target_i=args.lufs)

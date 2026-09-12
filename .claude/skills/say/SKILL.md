@@ -27,7 +27,11 @@ Keep it a single invocation beginning with
 - **Voice + window**: `--voice NAME` (`--list-voices`), or any voice name as a
   bare flag (`--calm`, `--muted`, `--presenter`, ...); `--ref-start SECS`,
   `--ref-secs SECS` (max 15s). Default voice `presenter`.
-- **Delivery**: `--emotion neutral|happy|sad|angry`, `--seg-tokens`, `--gap-ms`.
+- **Delivery**: `--emotion neutral|happy|sad|angry`, `--rate 0.9` (slower),
+  `--sentence-gap`/`--para-gap`/`--breath-gap` (ms). Pacing marks typed in the
+  text are honored: `,,,` = breathe here, `[pause]`, `[pause 1.5]` — pass them
+  through verbatim, don't "fix" `,,,` into a comma. `--my-breaths` = pause only
+  at those marks and at line breaks (no automatic sentence/paragraph pauses).
 - Do NOT use `--format ogg` here (no point — it's not being saved).
 
 ## Be quiet — this is the most important rule
