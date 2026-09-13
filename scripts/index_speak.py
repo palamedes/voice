@@ -190,6 +190,53 @@ def speech_level_db(chunks, sr):
     return float(20 * np.log10(np.sqrt((active ** 2).mean()) + 1e-9))
 
 
+def assemble(rendered, sr, wav_path, normalize=True, lufs=-16.0, name=lambda v: v):
+    """Join rendered chunks [(speech or None, pause_ms, voice), ...] and their pauses into
+    wav_path, levelling every voice to the same loudness, then loudness-normalize the
+    file. Shared by ./speak and Jarvis's render. Returns the length in seconds."""
+    # Different reference clips come out at different loudness. Turn every voice down to
+    # the quietest one's speech level (so nothing clips); the final normalization then
+    # lifts the whole file.
+    spoken = {}
+    for speech, _, voice in rendered:
+        if speech is not None:
+            spoken.setdefault(voice, []).append(speech)
+    if len(spoken) > 1:
+        levels = {v: speech_level_db(chunks, sr) for v, chunks in spoken.items()}
+        target = min(levels.values())
+        print("[index_speak] levelled voices: " + ", ".join(
+            f"{name(v)} {target - db:+.1f} dB" for v, db in levels.items()))
+        rendered = [(s if s is None else (s * 10 ** ((target - levels[v]) / 20)).astype(np.int16), ms, v)
+                    for s, ms, v in rendered]
+    pieces, spans, pos = [], [], 0       # spans: where each voice's speech sits in the file
+    for speech, pause_ms, voice in rendered:
+        if speech is not None:
+            pieces.append(speech)
+            spans.append((pos, pos + len(speech), voice))
+            pos += len(speech)
+        pieces.append(np.zeros(sr * pause_ms // 1000, dtype=np.int16))
+        pos += len(pieces[-1])
+    audio = np.concatenate(pieces)
+    write_wav(wav_path, audio, sr)
+
+    if normalize:
+        normalize_loudness(wav_path, target_i=lufs)
+        if len(spoken) > 1:
+            # loudnorm's time-varying gain nudges the levelled voices apart again: measure
+            # each voice in the normalized file, correct the raw audio by the difference,
+            # and normalize once more.
+            done = read_wav(wav_path)
+            after = {v: speech_level_db([done[a:b] for a, b, vv in spans if vv == v], sr)
+                     for v in spoken}
+            mean = sum(after.values()) / len(after)
+            fixed = audio.astype(np.float64)
+            for a, b, v in spans:
+                fixed[a:b] *= 10 ** ((mean - after[v]) / 20)
+            write_wav(wav_path, np.clip(fixed, -32768, 32767).astype(np.int16), sr)
+            normalize_loudness(wav_path, target_i=lufs)
+    return len(audio) / sr
+
+
 @contextlib.contextmanager
 def muted_output():
     """Silence stdout/stderr at the file-descriptor level, which also catches output from
@@ -495,47 +542,9 @@ def main() -> int:
                 speech = stretch(speech, sr, args.rate)
         rendered.append((speech, pause_ms, voice))
 
-    # Different reference clips come out at different loudness. Turn every voice down to
-    # the quietest one's speech level (so nothing clips); the final normalization then
-    # lifts the whole file.
-    spoken = {}
-    for speech, _, voice in rendered:
-        if speech is not None:
-            spoken.setdefault(voice, []).append(speech)
-    if len(spoken) > 1:
-        levels = {v: speech_level_db(chunks, sr) for v, chunks in spoken.items()}
-        target = min(levels.values())
-        print("[index_speak] levelled voices: " + ", ".join(
-            f"{v or start_name} {target - db:+.1f} dB" for v, db in levels.items()))
-        rendered = [(s if s is None else (s * 10 ** ((target - levels[v]) / 20)).astype(np.int16), ms, v)
-                    for s, ms, v in rendered]
-    pieces, spans, pos = [], [], 0       # spans: where each voice's speech sits in the file
-    for speech, pause_ms, voice in rendered:
-        if speech is not None:
-            pieces.append(speech)
-            spans.append((pos, pos + len(speech), voice))
-            pos += len(speech)
-        pieces.append(np.zeros(sr * pause_ms // 1000, dtype=np.int16))
-        pos += len(pieces[-1])
-    audio = np.concatenate(pieces)
-    print(f"[index_speak] {len(audio) / sr:.1f}s of audio in {time.time() - gen_start:.1f}s")
-    write_wav(wav_path, audio, sr)
-
-    if args.normalize:
-        normalize_loudness(wav_path, target_i=args.lufs)
-        if len(spoken) > 1:
-            # loudnorm's time-varying gain nudges the levelled voices apart again: measure
-            # each voice in the normalized file, correct the raw audio by the difference,
-            # and normalize once more.
-            done = read_wav(wav_path)
-            after = {v: speech_level_db([done[a:b] for a, b, vv in spans if vv == v], sr)
-                     for v in spoken}
-            mean = sum(after.values()) / len(after)
-            fixed = audio.astype(np.float64)
-            for a, b, v in spans:
-                fixed[a:b] *= 10 ** ((mean - after[v]) / 20)
-            write_wav(wav_path, np.clip(fixed, -32768, 32767).astype(np.int16), sr)
-            normalize_loudness(wav_path, target_i=args.lufs)
+    seconds = assemble(rendered, sr, wav_path, normalize=args.normalize, lufs=args.lufs,
+                       name=lambda v: v or start_name)
+    print(f"[index_speak] {seconds:.1f}s of audio in {time.time() - gen_start:.1f}s")
 
     outputs = [wav_path]
     if args.format in ("ogg", "both"):

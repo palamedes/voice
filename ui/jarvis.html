@@ -8,7 +8,7 @@
   :root {
     --bg: #0f1115; --panel: #171a21; --card: #12151b; --line: #262b36; --field: #0c0e12;
     --text: #e8e9ed; --muted: #8b91a1; --accent: #7c9cff;
-    --left: #2a2f3a; --right: #2f6df6; --ok: #3ecf8e; --warn: #f5b44a; --err: #ff6b6b;
+    --left: #2a2f3a; --right: #2f6df6; --guest: #1f9d55; --ok: #3ecf8e; --warn: #f5b44a; --err: #ff6b6b;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -58,28 +58,50 @@
   .sides { display: flex; gap: .6rem; }
   .sides label { flex: 1; font-size: .8rem; color: var(--muted); display: grid; gap: .2rem; }
   #thread { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: .35rem;
-            padding: .6rem 2rem; margin: .6rem 0; border-top: 1px solid var(--line);
+            padding: .6rem .4rem; margin: .6rem 0; border-top: 1px solid var(--line);
             border-bottom: 1px solid var(--line); }
-  .row { display: flex; flex-direction: column; max-width: 75%; position: relative; }
+  .row { display: flex; flex-direction: column; max-width: 85%; border-radius: 4px; }
   .row.left { align-self: flex-start; }
   .row.right { align-self: flex-end; align-items: flex-end; }
-  .who { font-size: .72rem; color: var(--muted); margin: 0 .7rem .1rem; }
-  .bubble { padding: .5rem .8rem; border-radius: 18px; cursor: pointer;
+  .who { font-size: .72rem; color: var(--muted); margin: 0 1.9rem .1rem; }
+  .line { display: flex; align-items: center; gap: .25rem; }
+  .right .line { flex-direction: row-reverse; }
+  .bubble { padding: .5rem .8rem; border-radius: 18px; cursor: text;
             white-space: pre-wrap; overflow-wrap: anywhere; }
   .left .bubble { background: var(--left); border-bottom-left-radius: 6px; }
   .right .bubble { background: var(--right); color: #fff; border-bottom-right-radius: 6px; }
-  .bubble:hover { filter: brightness(1.15); }
-  .del { position: absolute; bottom: .3rem; padding: 0 .35rem; background: transparent;
-         border: none; color: var(--muted); opacity: 0; }
-  .left .del { right: -1.8rem; }
-  .right .del { left: -1.8rem; }
-  .row:hover .del, .del:focus { opacity: 1; }
+  .row.guest { align-self: flex-start; }
+  .guest .bubble { background: var(--guest); color: #fff; border-bottom-left-radius: 6px; }
+  .bubble:hover { filter: brightness(1.12); }
+  .bubble.editing { outline: 2px solid var(--accent); filter: none; }
+  .grip { cursor: grab; color: var(--muted); user-select: none; padding: 0 .15rem; opacity: 0; }
+  .tools { display: flex; opacity: 0; }
+  .tools button { background: transparent; border: none; color: var(--muted);
+                  padding: .1rem .3rem; font-size: .85rem; }
+  .tools button:hover { color: var(--text); }
+  .row:hover .grip, .row:hover .tools, .row:focus-within .tools { opacity: 1; }
+  .row.dragging { opacity: .35; }
+  .row.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+  .row.drop-after { box-shadow: 0 3px 0 var(--accent); }
   #composer { display: flex; gap: .4rem; }
   .side { white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
   .side.right { background: var(--right); border-color: var(--right); color: #fff; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .6rem; }
   .check { font-size: .85rem; color: var(--muted); display: flex; gap: .35rem; align-items: center; }
   .check input { width: auto; }
+  .hint { font-size: .75rem; color: var(--muted); margin-top: .4rem; }
+
+  .saved { display: grid; gap: .4rem; margin-bottom: .6rem; }
+  .saved-actions { display: flex; gap: .4rem; align-items: center; }
+  .conv-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chips { display: flex; flex-wrap: wrap; gap: .35rem; max-height: 5.6rem; overflow: auto; }
+  .chip { display: inline-flex; align-items: center; border: 1px solid var(--line);
+          border-radius: 999px; background: var(--card); }
+  .chip.current { border-color: var(--accent); }
+  .chip button { background: transparent; border: none; border-radius: 999px;
+                 padding: .2rem .55rem; font-size: .85rem; }
+  .chip .chip-tool { color: var(--muted); padding: .2rem .35rem; }
+  .chip .chip-tool:hover { color: var(--text); }
 
   body.not-ready .speaks { opacity: .55; }
   .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
@@ -93,7 +115,7 @@
   <h1>Jarvis</h1>
   <span id="status" class="pill">checking…</span>
   <button id="start" type="button">Start Jarvis</button>
-  <button id="stop" type="button" title="Esc">Stop talking</button>
+  <button id="stop" type="button" title="Esc — also clears anything waiting to be said">Stop talking</button>
   <button id="quit" type="button">Shut down</button>
 </header>
 
@@ -112,6 +134,14 @@
 
   <section>
     <h2>Conversation</h2>
+    <div class="saved">
+      <div class="saved-actions">
+        <span id="conv-name" class="conv-name">Untitled</span>
+        <button id="save" type="button" class="small" title="Save (Ctrl+S)">Save</button>
+        <button id="new" type="button" class="small" title="Start a new, empty conversation">New</button>
+      </div>
+      <div id="saved-list" class="chips" aria-label="Saved conversations"></div>
+    </div>
     <div class="sides">
       <label>Left <select id="left"></select></label>
       <label>Right <select id="right"></select></label>
@@ -119,15 +149,18 @@
     <div id="thread" class="speaks"></div>
     <form id="composer" autocomplete="off">
       <button id="side" type="button" class="side left" title="Switch side (Tab)"></button>
-      <input id="msg" placeholder="Type a line — Enter sends, Tab switches side" aria-label="Next line">
-      <button type="submit">Send</button>
+      <input id="msg" placeholder="Type a line — Enter adds it, Tab switches side" aria-label="Next line">
+      <button type="submit">Add</button>
     </form>
     <div class="actions">
       <button id="play-all" type="button">▶ Play all</button>
+      <button id="render" type="button" title="Download the whole conversation as a .wav">⬇ Render out</button>
       <button id="copy" type="button">Copy as script</button>
-      <button id="clear" type="button">Clear</button>
       <label class="check"><input id="autospeak" type="checkbox"> speak each line as I add it</label>
     </div>
+    <div class="hint">Click a line to edit it. Hover for ▶ play · ⇄ other side · ↑ ↓ · × delete, or drag ⠿ to reorder.
+      A panel card's → (Ctrl+Enter) drops its line in here — green if they're not the left or right speaker.
+      Lines wait their turn; Stop talking (Esc) clears the queue.</div>
   </section>
 </main>
 
@@ -153,11 +186,15 @@ function el(tag, attrs = {}, children = []) {
 
 // ---- state, remembered in this browser -----------------------------------------
 const KEY = "jarvis-ui";
+const VERSION = 2;
 function loadState() {
   try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
 }
+const saved = loadState();
+if (saved.v !== VERSION) saved.autospeak = false;   // "speak as I add" now starts off
 const state = Object.assign(
-  { panel: [], left: "", right: "", lines: [], side: "left", autospeak: true }, loadState());
+  { panel: [], left: "", right: "", lines: [], side: "left", autospeak: false,
+    name: "", convId: "", savedSnap: "" }, saved, { v: VERSION });
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
 }
@@ -166,6 +203,9 @@ let voices = [];
 let ready = false;
 let startingSince = 0;
 const starting = () => Date.now() - startingSince < 60000;
+const other = (side) => (side === "left" ? "right" : "left");
+// Left/right lines follow whoever is on that side; guest lines keep their own voice.
+const voiceOf = (line) => (line.side === "guest" ? line.voice : state[line.side]);
 
 // ---- talking to the page's server -----------------------------------------------
 async function api(path, body) {
@@ -185,11 +225,12 @@ function toast(message) {
   toastTimer = setTimeout(() => box.classList.remove("show"), 3500);
 }
 
+// Lines always queue behind whatever Jarvis is saying; only Stop talking interrupts.
 async function say(voice, text) {
   if (!text.trim()) return false;
   if (!ready) { toast("Start Jarvis first (top left)"); return false; }
   try {
-    const reply = await api("/api/say", { voice, text });
+    const reply = await api("/api/say", { voice, text, queue: true });
     if (!reply.ok) toast(reply.error || "Jarvis didn't answer");
     return Boolean(reply.ok);
   } catch {
@@ -209,7 +250,7 @@ async function refreshStatus() {
   pill.className = "pill " + (ready ? "ok" : s.error ? "err" : loading ? "loading" : "");
   pill.textContent = s.pageDown ? "page server stopped"
     : s.error ? "error: " + s.error
-    : ready ? "ready · " + labelFor(s.voice)
+    : ready ? (s.speaking ? "speaking…" : "ready") + " · " + labelFor(s.voice)
     : loading ? "loading Breeze…" : "not running";
   $("#start").disabled = Boolean(s.running || starting() || s.pageDown);
   $("#stop").disabled = !s.running;
@@ -231,6 +272,7 @@ $("#quit").addEventListener("click", async () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") api("/api/stop", {}).catch(() => {});
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveConversation(); }
 });
 
 // ---- voices ---------------------------------------------------------------------------
@@ -288,6 +330,9 @@ function renderPanel() {
   panel.replaceChildren(...state.panel.map((member) => {
     const line = el("input", { placeholder: `Something for ${member.label} to say…`,
                                "aria-label": `Line for ${member.label}` });
+    line.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); injectLine(member.voice, line); }
+    });
     const label = el("input", { class: "label", value: member.label, "aria-label": "Name on the panel" });
     label.addEventListener("input", () => {
       member.label = label.value.trim() || member.voice;
@@ -309,9 +354,27 @@ function renderPanel() {
       el("form", { autocomplete: "off", onsubmit: async (e) => {
         e.preventDefault();
         if (await say(member.voice, line.value)) line.value = "";
-      } }, [line, el("button", { type: "submit" }, "Say")]),
+      } }, [
+        line,
+        el("button", { type: "submit", title: "Say it now (Enter)" }, "Say"),
+        el("button", { type: "button", title: "Put it into the conversation (Ctrl+Enter)",
+                       "aria-label": `Add ${member.label}'s line to the conversation`,
+                       onclick: () => injectLine(member.voice, line) }, "→"),
+      ]),
     ]);
   }));
+}
+
+// A panel speaker's line goes into the conversation without changing the left/right
+// speakers: as a left/right line if they're one of them, otherwise as a green guest line.
+function injectLine(voice, input) {
+  const text = input.value.trim();
+  if (!text) return;
+  const side = voice === state.left ? "left" : voice === state.right ? "right" : "guest";
+  state.lines.push(side === "guest" ? { side, voice, text } : { side, text });
+  input.value = "";
+  changed();
+  if (state.autospeak) say(voice, text);
 }
 
 // ---- conversation ------------------------------------------------------------------------
@@ -320,6 +383,7 @@ function setSide(side, voice) {
   save();
   renderSides();
   renderThread();
+  renderName();
 }
 
 function renderSides() {
@@ -346,7 +410,7 @@ function renderSideButton() {
 }
 
 function toggleSide() {
-  state.side = state.side === "left" ? "right" : "left";
+  state.side = other(state.side);
   save();
   renderSideButton();
   $("#msg").focus();
@@ -356,6 +420,47 @@ $("#msg").addEventListener("keydown", (e) => {
   if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); toggleSide(); }
 });
 
+function changed() {
+  save();
+  renderThread();
+  renderName();
+}
+
+function move(from, to) {
+  if (to < 0 || to >= state.lines.length || from === to) return;
+  const [line] = state.lines.splice(from, 1);
+  state.lines.splice(to, 0, line);
+  changed();
+}
+
+// Click a bubble to fix it in place: Enter (or clicking away) saves, Esc cancels.
+function editLine(bubble, index) {
+  if (bubble.isContentEditable) return;
+  try { bubble.contentEditable = "plaintext-only"; } catch { bubble.contentEditable = "true"; }
+  bubble.classList.add("editing");
+  bubble.focus();
+  const range = document.createRange();
+  range.selectNodeContents(bubble);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const finish = (keep) => {
+    bubble.removeEventListener("blur", onBlur);
+    const text = bubble.innerText.trim();
+    if (keep && text) state.lines[index].text = text;
+    changed();
+  };
+  const onBlur = () => finish(true);
+  bubble.addEventListener("blur", onBlur);
+  bubble.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+}
+
+let dragFrom = null;
 function renderThread() {
   const thread = $("#thread");
   if (!state.lines.length) {
@@ -363,18 +468,57 @@ function renderThread() {
       "Pick a left and a right voice, then type the conversation below."));
     return;
   }
+  const tool = (label, title, action) =>
+    el("button", { type: "button", title, "aria-label": title, onclick: action }, label);
   thread.replaceChildren(...state.lines.map((line, i) => {
-    const voice = state[line.side];
-    return el("div", { class: "row " + line.side }, [
+    const voice = voiceOf(line);
+    const bubble = el("div", { class: "bubble", title: "Click to edit" }, line.text);
+    bubble.addEventListener("click", () => editLine(bubble, i));
+    const grip = el("span", { class: "grip", draggable: "true", title: "Drag to reorder" }, "⠿");
+    const row = el("div", { class: "row " + line.side }, [
       el("div", { class: "who" }, labelFor(voice)),
-      el("div", { class: "bubble", title: "Click to hear it again",
-                  onclick: () => say(voice, line.text) }, line.text),
-      el("button", { type: "button", class: "del", title: "Delete this line", onclick: () => {
-        state.lines.splice(i, 1);
-        save();
-        renderThread();
-      } }, "×"),
+      el("div", { class: "line" }, [
+        grip,
+        bubble,
+        el("div", { class: "tools" }, [
+          tool("▶", "Play this line", () => say(voice, line.text)),
+          ...(line.side === "guest" ? [] : [
+            tool("⇄", "Move to the other side", () => { line.side = other(line.side); changed(); })]),
+          tool("↑", "Move up", () => move(i, i - 1)),
+          tool("↓", "Move down", () => move(i, i + 1)),
+          tool("×", "Delete this line", () => { state.lines.splice(i, 1); changed(); }),
+        ]),
+      ]),
     ]);
+
+    grip.addEventListener("dragstart", (e) => {
+      dragFrom = i;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(i));
+      e.dataTransfer.setDragImage(row, 20, 20);
+      row.classList.add("dragging");
+    });
+    grip.addEventListener("dragend", () => {
+      dragFrom = null;
+      document.querySelectorAll(".row").forEach((r) => r.classList.remove("dragging", "drop-before", "drop-after"));
+    });
+    const below = (e) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+    row.addEventListener("dragover", (e) => {
+      if (dragFrom === null) return;
+      e.preventDefault();
+      const after = below(e);
+      row.classList.toggle("drop-before", !after);
+      row.classList.toggle("drop-after", after);
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+    row.addEventListener("drop", (e) => {
+      if (dragFrom === null) return;
+      e.preventDefault();
+      let to = i + (below(e) ? 1 : 0);
+      if (dragFrom < to) to -= 1;
+      move(dragFrom, to);
+    });
+    return row;
   }));
   thread.scrollTop = thread.scrollHeight;
 }
@@ -389,23 +533,58 @@ $("#composer").addEventListener("submit", (e) => {
   if (!voice) { toast(`Pick a ${side} voice first`); return; }
   state.lines.push({ side, text });
   input.value = "";
-  state.side = side === "left" ? "right" : "left";   // conversations go back and forth
-  save();
-  renderThread();
+  state.side = other(side);   // conversations go back and forth
+  changed();
   renderSideButton();
   if (state.autospeak) say(voice, text);
 });
 
 // The whole conversation as text with [voice] switches — what Jarvis and ./speak read.
 function script() {
-  return state.lines.map((line) => `[${state[line.side]}] ${line.text}`).join("\n");
+  return state.lines.map((line) => `[${voiceOf(line)}] ${line.text}`).join("\n");
 }
 
-$("#play-all").addEventListener("click", () => {
+function playAll() {
   if (!state.lines.length) return toast("Nothing to play yet");
-  if (state.lines.some((line) => !state[line.side])) return toast("Pick both voices first");
+  if (state.lines.some((line) => !voiceOf(line))) return toast("Pick both voices first");
   say(null, script());
-});
+}
+$("#play-all").addEventListener("click", playAll);
+
+// Jarvis renders the whole conversation to a .wav (same finish as ./speak) and the
+// browser downloads it, named after the conversation.
+async function renderOut() {
+  if (!state.lines.length) return toast("Nothing to render yet");
+  if (state.lines.some((line) => !voiceOf(line))) return toast("Pick both voices first");
+  if (!ready) return toast("Start Jarvis first (top left)");
+  const button = $("#render");
+  const file = slug(state.name || "conversation") + ".wav";
+  button.disabled = true;
+  button.textContent = "Rendering…";
+  try {
+    const response = await fetch("/api/render", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: script(), name: state.name || "conversation" }),
+    });
+    if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("audio/")) {
+      const reply = await response.json().catch(() => ({}));
+      return toast(reply.error || "Couldn't render it");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = el("a", { href: url, download: file });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast(`Rendered ${file}`);
+  } catch {
+    toast("The page's server isn't running");
+  } finally {
+    button.disabled = false;
+    button.textContent = "⬇ Render out";
+  }
+}
+$("#render").addEventListener("click", renderOut);
 $("#copy").addEventListener("click", async () => {
   if (!state.lines.length) return toast("Nothing to copy yet");
   try {
@@ -415,12 +594,98 @@ $("#copy").addEventListener("click", async () => {
     toast("Couldn't copy (the browser blocked the clipboard)");
   }
 });
-$("#clear").addEventListener("click", () => {
-  if (state.lines.length && confirm("Clear the whole conversation?")) {
-    state.lines = [];
-    save();
-    renderThread();
+// ---- saved conversations: JSON files in conversations/ on this machine ----------------
+let savedList = [];
+const slug = (name) =>
+  name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "untitled";
+const snapshot = () => JSON.stringify({ left: state.left, right: state.right, lines: state.lines });
+const dirty = () => state.lines.length > 0 && snapshot() !== state.savedSnap;
+
+function renderName() {
+  const label = $("#conv-name");
+  label.textContent = (state.name || "Untitled") + (dirty() ? " •" : "");
+  label.title = dirty() ? "Unsaved changes" : "Saved";
+}
+
+function renderSaved() {
+  const list = $("#saved-list");
+  if (!savedList.length) {
+    list.replaceChildren(el("span", { class: "hint" }, "Saved conversations show up here for one-click loading."));
+  } else {
+    list.replaceChildren(...savedList.map((c) => el("span", {
+      class: "chip" + (c.id === state.convId ? " current" : ""), title: `${c.lines} lines` }, [
+      el("button", { type: "button", class: "chip-name", title: "Load it",
+                     onclick: () => loadConversation(c.id) }, c.name),
+      el("button", { type: "button", class: "chip-tool", title: "Load and play it",
+                     "aria-label": `Load and play ${c.name}`,
+                     onclick: async () => { if (await loadConversation(c.id)) playAll(); } }, "▶"),
+      el("button", { type: "button", class: "chip-tool", title: "Delete it",
+                     "aria-label": `Delete ${c.name}`, onclick: () => deleteConversation(c) }, "×"),
+    ])));
   }
+  renderName();
+}
+
+async function loadSavedList() {
+  try { savedList = (await api("/api/conversations")).conversations; } catch { savedList = []; }
+  renderSaved();
+}
+
+// Who a conversation uses, with their panel names, so loading it brings the cast back.
+function castFor() {
+  const used = [state.left, state.right,
+                ...state.lines.filter((line) => line.side === "guest").map((line) => line.voice)];
+  return [...new Set(used.filter(Boolean))].map((voice) => ({ voice, label: labelFor(voice) }));
+}
+
+async function saveConversation() {
+  if (!state.lines.length) return toast("Nothing to save yet");
+  const name = (prompt("Save this conversation as:", state.name || "") || "").trim();
+  if (!name) return;
+  // Same name as what's loaded: update that file. A new name: a new file.
+  const id = name === state.name && state.convId ? state.convId : slug(name);
+  const clash = savedList.find((c) => c.id === id && c.id !== state.convId);
+  if (clash && !confirm(`Replace the saved "${clash.name}"?`)) return;
+  const reply = await api("/api/conversations/save", { name, id, conversation: {
+    left: state.left, right: state.right, lines: state.lines, cast: castFor() } }).catch(() => ({}));
+  if (!reply.ok) return toast(reply.error || "Couldn't save");
+  Object.assign(state, { name, convId: reply.id, savedSnap: snapshot() });
+  save();
+  toast(`Saved "${name}"`);
+  loadSavedList();
+}
+$("#save").addEventListener("click", saveConversation);
+
+async function loadConversation(id) {
+  if (dirty() && !confirm("Replace the current conversation? Its unsaved changes will be lost.")) return false;
+  const reply = await api("/api/conversations/load", { id }).catch(() => ({}));
+  if (!reply.ok) { toast(reply.error || "Couldn't load it"); return false; }
+  const c = reply.conversation;
+  for (const member of c.cast) {
+    if (!state.panel.some((m) => m.voice === member.voice)) state.panel.push(member);
+  }
+  Object.assign(state, { name: c.name, convId: id, left: c.left, right: c.right, lines: c.lines, side: "left" });
+  state.savedSnap = snapshot();
+  save();
+  render();
+  return true;
+}
+
+async function deleteConversation(c) {
+  if (!confirm(`Delete the saved conversation "${c.name}"?`)) return;
+  const reply = await api("/api/conversations/delete", { id: c.id }).catch(() => ({}));
+  if (!reply.ok) return toast(reply.error || "Couldn't delete it");
+  if (state.convId === c.id) Object.assign(state, { convId: "", savedSnap: "" });
+  save();
+  loadSavedList();
+}
+
+$("#new").addEventListener("click", () => {
+  if (dirty() && !confirm("Start a new conversation? The current one has unsaved changes.")) return;
+  Object.assign(state, { name: "", convId: "", savedSnap: "", lines: [], side: "left" });
+  changed();
+  renderSaved();
+  renderSideButton();
 });
 
 const autospeak = $("#autospeak");
@@ -432,10 +697,13 @@ function render() {
   renderPanel();
   renderSides();
   renderThread();
+  renderSaved();
 }
 
+save();
 render();
 loadVoices();
+loadSavedList();
 refreshStatus();
 setInterval(refreshStatus, 2000);
 </script>

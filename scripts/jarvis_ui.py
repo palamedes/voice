@@ -12,7 +12,9 @@ when you press Start) the same way ./jarvis does. It only listens on 127.0.0.1.
 """
 import argparse
 import json
+import re
 import sys
+import tempfile
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +25,39 @@ import jarvis_daemon as jarvis  # noqa: E402
 from index_speak import list_voices  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent.parent / "ui" / "jarvis.html"
+# Saved conversations: one JSON file each, so scenes can also be prepared in an editor.
+CONVERSATIONS = Path(__file__).resolve().parent.parent / "conversations"
+
+
+def slug(name: str) -> str:
+    """File name for a conversation's display name ("Rusty Tankard" -> rusty-tankard)."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:80] or "untitled"
+
+
+def conversation_path(cid: str) -> Path | None:
+    """conversations/<id>.json, or None if the id could point outside that folder."""
+    path = CONVERSATIONS / f"{cid}.json"
+    if not cid or "/" in cid or "\\" in cid or cid.startswith(".") or path.parent != CONVERSATIONS:
+        return None
+    return path
+
+
+def clean_conversation(name: str, conv: dict) -> dict:
+    """Keep only the fields the page uses, with sane types (files may be hand-edited)."""
+    lines = []
+    for line in conv.get("lines") or []:
+        if not isinstance(line, dict):
+            continue
+        side, text = line.get("side"), str(line.get("text", "")).strip()
+        if side in ("left", "right", "guest") and text:
+            entry = {"side": side, "text": text}
+            if side == "guest":
+                entry["voice"] = str(line.get("voice") or "")
+            lines.append(entry)
+    cast = [{"voice": str(m["voice"]), "label": str(m.get("label") or m["voice"])}
+            for m in conv.get("cast") or [] if isinstance(m, dict) and m.get("voice")]
+    return {"name": name, "left": str(conv.get("left") or ""), "right": str(conv.get("right") or ""),
+            "cast": cast, "lines": lines}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -35,6 +70,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_download(self, data: bytes, filename: str):
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(data)
 
@@ -59,6 +102,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"running": bool(status), **(status or {})})
         elif self.path == "/api/voices":
             self.send_json({"voices": sorted(list_voices())})
+        elif self.path == "/api/conversations":
+            found = []
+            for f in CONVERSATIONS.glob("*.json"):
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue    # a half-written or hand-broken file; load reports it
+                found.append({"id": f.stem, "name": str(data.get("name") or f.stem),
+                              "lines": len(data.get("lines") or [])})
+            found.sort(key=lambda c: c["name"].casefold())
+            self.send_json({"conversations": found})
         else:
             self.send_json({"ok": False, "error": "not found"}, 404)
 
@@ -87,9 +141,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.last_start = time.time()
             self.send_json({"ok": True, "started": started})
         elif self.path == "/api/say":
+            # Lines from the page wait their turn instead of cutting off what's playing;
+            # only Stop talking interrupts.
             resp = jarvis.request({"cmd": "say", "text": str(body.get("text", "")),
                                    "voice": body.get("voice") or None,
-                                   "my_breaths": bool(body.get("my_breaths"))}, timeout=15)
+                                   "my_breaths": bool(body.get("my_breaths")),
+                                   "queue": bool(body.get("queue", True))}, timeout=15)
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
         elif self.path in ("/api/stop", "/api/quit"):
             cmd = self.path.rsplit("/", 1)[1]
@@ -97,6 +154,45 @@ class Handler(BaseHTTPRequestHandler):
             if cmd == "quit":
                 self.server.last_start = 0.0
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
+        elif self.path == "/api/render":
+            # Jarvis renders into a temp folder; the browser's download is the only copy kept.
+            text = str(body.get("text", "")).strip()
+            if not text:
+                return self.send_json({"ok": False, "error": "nothing to render"}, 400)
+            with tempfile.TemporaryDirectory(prefix="jarvis-render-") as tmp:
+                out = Path(tmp) / "render.wav"
+                resp = jarvis.request({"cmd": "render", "text": text, "out": str(out),
+                                       "my_breaths": bool(body.get("my_breaths"))}, timeout=None)
+                if not resp or not resp.get("ok") or not out.exists():
+                    return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
+                data = out.read_bytes()
+            self.send_download(data, slug(str(body.get("name") or "conversation")) + ".wav")
+        elif self.path == "/api/conversations/save":
+            name = str(body.get("name") or "").strip()
+            # Re-saving what's loaded keeps its file; a new name gets a new one.
+            path = conversation_path(str(body.get("id") or "") or slug(name))
+            if not name or not path:
+                return self.send_json({"ok": False, "error": "needs a name"}, 400)
+            conv = body.get("conversation")
+            data = clean_conversation(name, conv if isinstance(conv, dict) else {})
+            CONVERSATIONS.mkdir(exist_ok=True)
+            path.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+            self.send_json({"ok": True, "id": path.stem})
+        elif self.path in ("/api/conversations/load", "/api/conversations/delete"):
+            path = conversation_path(str(body.get("id") or ""))
+            if not path:
+                return self.send_json({"ok": False, "error": "bad conversation id"}, 400)
+            if self.path.endswith("/delete"):
+                path.unlink(missing_ok=True)
+                return self.send_json({"ok": True})
+            if not path.exists():
+                return self.send_json({"ok": False, "error": "that conversation isn't saved"}, 404)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                return self.send_json({"ok": False, "error": f"can't read {path.name} (broken JSON?)"}, 422)
+            self.send_json({"ok": True, "conversation": clean_conversation(str(data.get("name") or path.stem),
+                                                                           data)})
         else:
             self.send_json({"ok": False, "error": "not found"}, 404)
 

@@ -13,7 +13,8 @@ sentence by sentence: the next sentence renders while the current one plays.
   ./jarvis --stop | --status | --quit
 
 Runs in breeze-tts/.venv. All GPU work happens on one worker thread; the socket
-threads only queue requests. A new line interrupts whatever is playing.
+threads only queue requests. A new line interrupts whatever is playing, unless it's
+sent with queue (./jarvis --queue, and always from the page): then it waits its turn.
 """
 import argparse
 import json
@@ -35,6 +36,8 @@ DEFAULT_VOICE = "presenter"
 # Speech level (int16 dB scale, as index_speak.speech_level_db measures it) that
 # every voice is brought to — about where a loudness-normalized ./speak render sits.
 TARGET_LEVEL_DB = 74.0
+# Beat between two queued lines, when one is sent while another is still playing.
+LINE_GAP_MS = 450
 
 
 # ---------------------------------------------------------------- wire protocol
@@ -80,6 +83,7 @@ class Job:
         self.run, self.args = run, args
         self.done = threading.Event()
         self.cancel = threading.Event()
+        self.result = self.error = None
 
 
 # ---------------------------------------------------------------------- server
@@ -90,7 +94,8 @@ class Jarvis:
         self.ready = threading.Event()
         self.error: str | None = None
         self.current: Job | None = None
-        self.player: subprocess.Popen | None = None
+        self.player: subprocess.Popen | None = None   # one long-lived ffplay; audio queues into it
+        self.play_until = 0.0       # monotonic time when the audio written so far finishes
         self.refs = {}              # voice -> (reference clip, its transcript)
         self.levels = {}            # voice -> speech levels of its recent lines
         self.render = self.sr = None
@@ -119,6 +124,7 @@ class Jarvis:
                 job.run(self, job, *job.args)
             except Exception as e:
                 print(f"[jarvis] job failed: {e}", flush=True)
+                job.error = str(e)
                 job.done.set()
 
     def ref_for(self, voice: str):
@@ -149,17 +155,44 @@ class Jarvis:
         self.ref_for(voice)
         job.done.set()
 
+    def render_file(self, job: Job, text: str, auto: bool, out: str):
+        """Render text to a wav file instead of the speakers — same pacing, voice levelling
+        and loudness normalization as ./speak (Stop talking doesn't cancel it)."""
+        from audio_common import pacing_plan
+        from index_speak import assemble, list_voices, tighten_pauses, trim_edges
+        rendered = []
+        for chunk, pause_ms, voice in pacing_plan(text, auto=auto, voices=set(list_voices())):
+            voice = voice or self.voice
+            speech = None
+            if chunk:
+                speech = trim_edges(self.render(chunk, *self.ref_for(voice)), self.sr)
+                if not auto:
+                    speech = tighten_pauses(speech, self.sr)
+            rendered.append((speech, pause_ms, voice))
+        job.result = assemble(rendered, self.sr, Path(out))
+        job.done.set()
+
+    def play(self, pcm: bytes):
+        """Queue audio behind whatever is already playing, starting the player if needed.
+        (-autoexit only fires at EOF, i.e. when this server exits and the pipe closes.)"""
+        if self.player is None or self.player.poll() is not None:
+            self.player = subprocess.Popen(
+                ["ffplay", "-autoexit", "-nodisp", "-loglevel", "error", "-i", "-"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.player.stdin.write(wav_stream_header(self.sr))
+        self.play_until = max(self.play_until, time.monotonic()) + len(pcm) / 2 / self.sr
+        self.player.stdin.write(pcm)
+        self.player.stdin.flush()
+
     def speak(self, job: Job, text: str, auto: bool):
         from audio_common import pacing_plan
         from index_speak import list_voices, tighten_pauses, trim_edges
         plan = pacing_plan(text, auto=auto, voices=set(list_voices()))
-        player = subprocess.Popen(["ffplay", "-autoexit", "-nodisp", "-loglevel", "error", "-i", "-"],
-                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL)
-        self.player = player
         t0, first = time.time(), True
         try:
-            player.stdin.write(wav_stream_header(self.sr))
+            if self.play_until > time.monotonic():
+                # A queued line while another is still playing: leave a beat between them.
+                self.play(bytes(2 * (self.sr * LINE_GAP_MS // 1000)))
             for chunk, pause_ms, voice in plan:
                 if job.cancel.is_set():
                     break
@@ -175,25 +208,27 @@ class Jarvis:
                         first = False
                 if job.cancel.is_set():
                     break
-                player.stdin.write(pcm + bytes(2 * (self.sr * pause_ms // 1000)))
-            player.stdin.close()
+                self.play(pcm + bytes(2 * (self.sr * pause_ms // 1000)))
         except (BrokenPipeError, OSError):
             pass
-        # Let it play out on the side, so the GPU thread can take the next job.
-        threading.Thread(target=lambda: (player.wait(), job.done.set()), daemon=True).start()
+        # The GPU thread moves on (and can render the next line while this one plays);
+        # the job counts as done once its audio has played out.
+        threading.Timer(max(0.0, self.play_until - time.monotonic()), job.done.set).start()
 
     # -- requests ---------------------------------------------------------------
     def interrupt(self):
-        """Stop the current line and drop any that haven't started."""
+        """Stop talking: cancel the current line, drop queued ones, discard buffered audio."""
         for job in [self.current, *list(self.jobs.queue)]:
             if job and job.run == Jarvis.speak:
                 job.cancel.set()
-        player = self.player
+        player, self.player = self.player, None
         if player and player.poll() is None:
             try:
                 player.kill()
-            except OSError:
+                player.wait(timeout=2)   # reaped, so the next line starts a fresh player
+            except (OSError, subprocess.TimeoutExpired):
                 pass
+        self.play_until = time.monotonic()
 
     def handle(self, conn: socket.socket):
         req = recv_json(conn)
@@ -202,7 +237,7 @@ class Jarvis:
         cmd = req.get("cmd")
         if cmd == "ping":
             send_json(conn, {"ok": True, "ready": self.ready.is_set(), "voice": self.voice,
-                             "error": self.error})
+                             "error": self.error, "speaking": time.monotonic() < self.play_until})
         elif cmd == "stop":
             self.interrupt()
             send_json(conn, {"ok": True})
@@ -229,12 +264,25 @@ class Jarvis:
             if not text:
                 send_json(conn, {"ok": False, "error": "empty text"})
                 return
-            self.interrupt()
+            if not req.get("queue"):
+                self.interrupt()
             job = Job(Jarvis.speak, text, not req.get("my_breaths"))
             self.jobs.put(job)
             if req.get("wait"):
                 job.done.wait()
             send_json(conn, {"ok": True, "voice": self.voice})
+        elif cmd == "render":
+            text, out = (req.get("text") or "").strip(), req.get("out")
+            if not self.ready.is_set() or self.error:
+                send_json(conn, {"ok": False, "error": self.error or "still loading"})
+            elif not text or not out:
+                send_json(conn, {"ok": False, "error": "render needs text and an output path"})
+            else:
+                # Waits its turn on the GPU thread like any line, then replies when the file is done.
+                job = Job(Jarvis.render_file, text, not req.get("my_breaths"), out)
+                self.jobs.put(job)
+                job.done.wait()
+                send_json(conn, {"ok": job.error is None, "seconds": job.result, "error": job.error})
         else:
             send_json(conn, {"ok": False, "error": f"unknown cmd {cmd!r}"})
 
@@ -332,6 +380,8 @@ def main() -> int:
     ap.add_argument("--my-breaths", action="store_true",
                     help="Pause only at your ,,, / [breath] / [pause] marks and line breaks.")
     ap.add_argument("--wait", action="store_true", help="Block until it finishes speaking.")
+    ap.add_argument("--queue", action="store_true",
+                    help="Wait for whatever is playing to finish instead of interrupting it.")
     args = ap.parse_intermixed_args(argv)
 
     if args.voice and args.voice not in voices:
@@ -373,7 +423,7 @@ def main() -> int:
         print(f"[jarvis] ready (voice: {(status or {}).get('voice')})")
         return 0
     resp = request({"cmd": "say", "text": text, "voice": args.voice,
-                    "my_breaths": args.my_breaths, "wait": args.wait},
+                    "my_breaths": args.my_breaths, "wait": args.wait, "queue": args.queue},
                    timeout=None if args.wait else 15)
     if not resp or not resp.get("ok"):
         print(f"[jarvis] error: {(resp or {}).get('error', 'no response')}", file=sys.stderr)

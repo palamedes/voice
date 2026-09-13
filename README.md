@@ -128,6 +128,7 @@ current one plays).
 ./jarvis --art-bell                    # switch voice; it sticks for later lines
 ./jarvis --art-bell "Hello, caller."   # switch and speak
 ./jarvis "Actually, cancel that."      # a new line interrupts the current one
+./jarvis --queue "And another thing."  # ...or waits its turn
 ./jarvis --stop                        # just stop talking
 ./jarvis --status                      # is it up, and in which voice?
 ./jarvis --quit                        # shut it down and free the GPU memory
@@ -151,16 +152,54 @@ D&D session its own voice:
 - **Voices:** every voice in `voice_samples/`. Click one to add it to the
   panel; drop new clips into `voice_samples/` and press Reload.
 - **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
-  press Enter, and Jarvis says it in that voice. L / R put that speaker on the
-  left or right of the conversation.
+  press Enter, and Jarvis says it in that voice. **→** (or Ctrl+Enter) puts the
+  line into the conversation instead, without changing the left and right
+  speakers: someone who isn't one of them shows up as a green bubble, so a
+  third or fourth character can chime in. L / R put that speaker on the left or
+  right of the conversation.
 - **Conversation:** iMessage-style bubbles between a left and a right voice.
-  Type a line and press Enter: it's spoken right away and the side flips, so a
-  back-and-forth is just typing (Tab switches side by hand). Click a bubble to
-  hear it again. **Play all** reads the whole exchange with the voice switches
-  and the beats between speakers; **Copy as script** gives you the
-  `[voice]`-marked text to render to a file with `./speak --file` (quit
-  Jarvis first, since both need the GPU).
-- The panel and the conversation are remembered in the browser.
+  Type a line and press Enter: it's added and the side flips, so a
+  back-and-forth is just typing (Tab switches side by hand). Click a line to
+  fix a typo (Enter saves, Esc cancels). Hover a line for ▶ play, ⇄ move to
+  the other side, ↑ ↓ and × delete, or drag it by ⠿ to reorder. **Play all**
+  reads the whole exchange with the voice switches and the beats between
+  speakers; **Copy as script** gives you the `[voice]`-marked text to render
+  to a file with `./speak --file` (quit Jarvis first, since both need the GPU).
+  **⬇ Render out** downloads the whole conversation as a `.wav` named after
+  it: the running Jarvis renders it with the same pacing, voice levelling and
+  loudness as `./speak` (in roughly 40% of the audio's length; anything you
+  send meanwhile waits), and the download is the only copy kept.
+  "Speak each line as I add it" is off by default.
+- **Nothing on the page interrupts:** a line you send while Jarvis is talking
+  waits its turn and plays after a short beat, so you can type as fast as you
+  like. Stop talking (or Esc) cuts it off and clears anything waiting.
+- **Saved conversations** (for prepping scenes): **Save** (Ctrl+S) names the
+  conversation and stores it, with its left/right speakers and the
+  characters' names, as a file in `conversations/`. Saved ones sit as chips at
+  the top of the conversation: click one to load it (any missing characters
+  come back onto the panel), ▶ to load and play it right away, × to delete it.
+  **New** starts an empty one. A • next to the name means unsaved changes.
+- Nothing is saved as audio files; it all streams straight to the speakers.
+  The panel and the current conversation are also remembered in the browser.
+
+Saved conversations are plain JSON, so you can also write scenes ahead of time
+in an editor — drop a file like this into `conversations/` and it shows up as
+a chip (guest lines name their own voice; left/right lines use whoever is on
+that side):
+
+```json
+{
+ "name": "The Rusty Tankard",
+ "left": "orc",
+ "right": "bard",
+ "cast": [{"voice": "orc", "label": "Grukk the Orc"}, {"voice": "bard", "label": "Lyra"}],
+ "lines": [
+  {"side": "left", "text": "(grunts) You. Bard. Play something that isn't terrible."},
+  {"side": "right", "text": "For you? Anything."},
+  {"side": "guest", "voice": "presenter", "text": "The barkeep sighs and reaches for the club."}
+ ]
+}
+```
 
 The page only listens on 127.0.0.1 and only takes requests from itself.
 Ctrl+C stops the page; Jarvis keeps running until you shut it down.
@@ -359,8 +398,10 @@ silence is removed; the voice itself isn't touched.
 
 `./jarvis` (`scripts/jarvis_daemon.py`, warm Breeze server): the text as
 words, `--text` or `--file`; `--voice NAME` or any voice name as a bare flag
-(it sticks for later lines); `--my-breaths`, `--wait`, `--stop`, `--status`,
-`--quit`, `--list-voices`, and `--serve` (run the server in the foreground).
+(it sticks for later lines); `--queue` (wait for the current line instead of
+interrupting it), `--my-breaths`, `--wait`, `--stop` (also clears the queue),
+`--status`, `--quit`, `--list-voices`, and `--serve` (run the server in the
+foreground).
 
 `./merge` (`scripts/merge_audio.py`): `--gap-ms` sets the pause at the seam
 (default 450, a sentence-to-sentence pause; ~700+ for a paragraph break).
@@ -395,6 +436,7 @@ scripts/index_speak.py    cloned-voice narration (Breeze TTS 2, or IndexTTS-2 wi
 scripts/jarvis_daemon.py  warm Breeze server behind jarvis
 scripts/jarvis_ui.py      the local web server behind jarvis-ui
 ui/jarvis.html            the Jarvis page itself
+conversations/            conversations saved from the Jarvis page (JSON)
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)
