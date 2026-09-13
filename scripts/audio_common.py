@@ -39,9 +39,11 @@ def normalize_loudness(path: Path, target_i: float = -16.0, tp: float = -1.5, lr
     tmp.replace(path)
 
 
-# Inline marks: ,,, (breathe here), [breath], [pause], [pause 1.5], [pause 1.5s], [pause 800ms].
+# Inline marks: ,,, (breathe here), [breath], [pause], [pause 1.5], [pause 1.5s], [pause 800ms],
+# and [voice-name] (switch voices from here on; only names of real voices count).
 # ,,, must be caught before IndexTTS sees it — its normalizer turns it into "…".
-MARK = re.compile(r"\[(pause|breath)(?:\s+(\d+(?:\.\d+)?)\s*(ms|s)?)?\]|[ \t]*,{3,}", re.IGNORECASE)
+MARK = re.compile(r"\[(pause|breath)(?:\s+(\d+(?:\.\d+)?)\s*(ms|s)?)?\]|\[(?P<voice>[\w.-]+)\]|[ \t]*,{3,}",
+                  re.IGNORECASE)
 # With --my-breaths every line break is a breath mark too.
 MARK_OR_BREAK = re.compile(MARK.pattern + r"|\n", re.IGNORECASE)
 # Sentence boundary: whitespace after . ! ? or …, optionally behind a closing quote/paren.
@@ -64,8 +66,8 @@ def split_sentences(text: str) -> list:
 
 
 def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms=400,
-                auto=True) -> list:
-    """Split text into [(chunk, pause_after_ms), ...] for one-chunk-at-a-time synthesis.
+                auto=True, voices=()) -> list:
+    """Split text into [(chunk, pause_after_ms, voice), ...] for one-chunk-at-a-time synthesis.
 
     Every sentence becomes its own chunk followed by sentence_ms of silence; the
     last chunk of a paragraph (blank-line separated) gets para_ms instead. An
@@ -77,21 +79,27 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
     no sentence or paragraph pauses. Every line break is a breath (breath_ms), so
     blank lines stack: one break = 1 breath, an empty line between = 2, and so on.
     A mark at the end of a line stands in for that line's first break.
+
+    [name] (a name in `voices`) switches to that voice until the next switch; a
+    chunk's voice is None before the first one. A switch ends the chunk but adds no
+    pause of its own. Brackets around anything else stay in the text, with a warning.
     """
-    plan = []            # entries: [chunk, pause_ms, explicit]
+    plan = []            # entries: [chunk, pause_ms, explicit, voice]
+    voice = None
+    unknown = []
     split = split_sentences if auto else (lambda s: [" ".join(s.split())])
 
     def add_text(s):
         # Skip punctuation-only leftovers, e.g. the "." in "word [pause]."
-        plan.extend([c, sentence_ms, False] for c in split(s) if re.search(r"\w", c))
+        plan.extend([c, sentence_ms, False, voice] for c in split(s) if re.search(r"\w", c))
 
     def add_mark(ms):
         if plan and plan[-1][2]:
-            plan[-1][1] += ms            # stacked marks add up
+            plan[-1][1] += ms                    # stacked marks add up
         elif plan and plan[-1][0]:
-            plan[-1][1:] = [ms, True]    # mark replaces the automatic gap
+            plan[-1][1], plan[-1][2] = ms, True  # mark replaces the automatic gap
         else:
-            plan.append(["", ms, True])
+            plan.append(["", ms, True, voice])
 
     # Auto: blank-line paragraphs, each ending in para_ms (single newlines are just
     # spaces). Mine: one block in which each line break is itself a breath mark.
@@ -104,10 +112,21 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
         pos = 0
         line_ends_in_mark = False
         for m in marks.finditer(para):
+            name = m.group("voice")
+            if name is not None and name not in voices:
+                unknown.append(name)             # not a voice: leave "[name]" in the text
+                continue
             if re.search(r"\w", para[pos:m.start()]):
                 line_ends_in_mark = False
             add_text(para[pos:m.start()])
             pos = m.end()
+            if name is not None:
+                # With --my-breaths only marks and line breaks pause, so the chunk a
+                # switch ends gets none of its own.
+                if not auto and plan and plan[-1][0] and not plan[-1][2]:
+                    plan[-1][1] = 0
+                voice = name
+                continue
             if m.group(0) == "\n":
                 if line_ends_in_mark:
                     line_ends_in_mark = False    # that mark is this line break's breath
@@ -125,7 +144,10 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
             plan[-1][1] = para_ms
     if plan and not plan[-1][2]:
         plan[-1][1] = 0                  # no automatic gap after the very end
-    return [(chunk, ms) for chunk, ms, _ in plan]
+    for name in dict.fromkeys(unknown):
+        print(f"[pacing] note: [{name}] isn't a voice name, so it's read as text (see --list-voices)",
+              file=sys.stderr)
+    return [(chunk, ms, v) for chunk, ms, _, v in plan]
 
 
 def strip_markdown(text: str) -> str:

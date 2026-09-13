@@ -46,7 +46,9 @@ clones Jason well, pronounces reliably, and has emotion presets; `--emotion`/`--
   and the model's own mid-phrase pauses are cut to 0.1s) — so keep the user's
   line breaks and blank lines exactly when writing text to `posts/`.
   `--auto-breaths` is the default.
-  `--dry-run` prints the chunks + pauses without rendering.
+  `[voice-name]` (exact name from `--list-voices`) switches voices from that point
+  until the next switch — keep these verbatim too.
+  `--dry-run` prints the chunks + pauses (and who reads each) without rendering.
 
 ## Steps
 1. If the text is more than a sentence or two, write it to `posts/<slug>.md`

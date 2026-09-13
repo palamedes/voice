@@ -15,8 +15,8 @@ Pacing: by default (--auto-breaths) text is fed one sentence at a time with real
 pauses between (longer at blank lines), and ,,, / [breath] / [pause N] marks add
 breaks exactly where you want them. With --my-breaths ONLY those marks and line
 breaks pause: no automatic pauses, and the model's own mid-phrase pauses are cut
-down to 0.1 s.
---dry-run shows the plan.
+down to 0.1 s. [voice-name] in the text switches voices until the next switch
+(each voice's lines are levelled to the same loudness). --dry-run shows the plan.
 
 Run with the IndexTTS venv:
   index-tts/.venv/bin/python scripts/index_speak.py \
@@ -162,6 +162,34 @@ def stretch(audio, sr, rate):
     return np.frombuffer(out, dtype=np.int16)
 
 
+def write_wav(path, audio, sr):
+    """Write int16 mono samples to a wav file."""
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(audio.tobytes())
+
+
+def read_wav(path):
+    """int16 mono samples from a wav file (as written by write_wav)."""
+    with wave.open(str(path)) as w:
+        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+
+
+def speech_level_db(chunks, sr):
+    """Loudness of the speech in these chunks, in dB: RMS over the 10 ms frames within
+    40 dB of the loudest one, so pauses and silence don't count."""
+    x = np.concatenate(chunks).astype(np.float64)
+    hop = sr // 100
+    n = len(x) // hop
+    if n == 0:
+        return 0.0
+    frames = np.sqrt((x[:n * hop].reshape(n, hop) ** 2).mean(axis=1))
+    active = frames[frames > frames.max() * 10 ** (-40 / 20)]
+    return float(20 * np.log10(np.sqrt((active ** 2).mean()) + 1e-9))
+
+
 @contextlib.contextmanager
 def muted_output():
     """Silence stdout/stderr at the file-descriptor level, which also catches output from
@@ -214,14 +242,15 @@ def ref_transcript(clip: Path, sidecar=None):
     return text
 
 
-def load_indextts(args, ref_path, gap_ms):
-    """IndexTTS-2 -> (render(text) -> int16 samples, sample rate)."""
+def load_indextts(args, gap_ms):
+    """IndexTTS-2 -> (render(text, ref_path, ref_text) -> int16 samples, sample rate).
+    ref_text is ignored: IndexTTS doesn't need the reference clip's words."""
     from indextts.infer_v2 import IndexTTS2
     tts = IndexTTS2(cfg_path=str(CKPT / "config.yaml"), model_dir=str(CKPT), use_fp16=args.fp16,
                     use_cuda_kernel=False, use_deepspeed=False)
     emo_vector = EMOTIONS[args.emotion]
 
-    def render(text):
+    def render(text, ref_path, ref_text=None):
         _, audio = tts.infer(
             spk_audio_prompt=str(ref_path),
             text=text,
@@ -237,8 +266,9 @@ def load_indextts(args, ref_path, gap_ms):
     return render, 22050
 
 
-def load_breeze(ref_path, ref_text, fast=False):
-    """Breeze TTS 2 -> (render(text) -> int16 samples, sample rate). Needs breeze-tts/.venv.
+def load_breeze(fast=False):
+    """Breeze TTS 2 -> (render(text, ref_path, ref_text) -> int16 samples, sample rate).
+    Needs breeze-tts/.venv.
     fast=True captures CUDA graphs up front: a slower start, then much less per-chunk overhead."""
     sys.path.insert(0, str(BREEZE))
     import functools
@@ -256,7 +286,7 @@ def load_breeze(ref_path, ref_text, fast=False):
         tokenizer, model, audio_tokenizer = load_runtime(BREEZE / "breeze-tts-2", device=resolve_device(),
                                                          attn_implementation="eager")
     update_generation_config_for_breeze(model)
-    # prepare_inputs re-encodes the reference clip for every chunk; it never changes in a run.
+    # prepare_inputs re-encodes the reference clip for every chunk; encode each clip once per run.
     templates._encode_prompt_audio = functools.lru_cache(maxsize=None)(templates._encode_prompt_audio)
 
     # Breeze's own infer.py settings. With fast, only the per-frame stages (backbone decode,
@@ -278,7 +308,7 @@ def load_breeze(ref_path, ref_text, fast=False):
             runtime.warmup_from_profile(profile)
         print(f"[index_speak] Breeze fast path warmed up in {time.time() - t0:.1f}s")
 
-    def render(text):
+    def render(text, ref_path, ref_text):
         request = {"id": "chunk", "text": text, "speaker": "S0",
                    "ref_audio_path": str(ref_path), "ref_text": ref_text}
         set_all_seeds(42)
@@ -408,51 +438,104 @@ def main() -> int:
     # into one generation, so it rushes. Instead we feed it one sentence (or
     # [pause]-delimited phrase) at a time and insert our own silences. With
     # --my-breaths only the marks split the text and nothing else is added.
+    all_voices = list_voices()
     plan = pacing_plan(text, sentence_ms=args.sentence_gap, para_ms=args.para_gap,
-                       breath_ms=args.breath_gap, auto=args.auto_breaths)
+                       breath_ms=args.breath_gap, auto=args.auto_breaths, voices=set(all_voices))
     gap_ms = args.gap_ms if args.gap_ms is not None else (200 if args.auto_breaths else 0)
+    start_name = args.voice or base_ref.stem
     if args.dry_run:
-        for chunk, pause_ms in plan:
+        switches = any(voice is not None for _, _, voice in plan)
+        current = object()
+        for chunk, pause_ms, voice in plan:
+            if switches and voice != current:
+                print(f"  == {voice or start_name} ==")
+                current = voice
             print(f"  {chunk or '(silence)'}\n      ~ {pause_ms} ms")
         return 0
+
+    # One reference per voice: the starting one (--voice/--ref, with its window) plus
+    # each [name] switched to in the text, which uses its clip's first 15 s.
+    refs = {None: (ref_path, sidecar)}
+    for name in dict.fromkeys(voice for _, _, voice in plan if voice is not None):
+        clip = all_voices[name]
+        refs[name] = (trim_ref(clip, 0, MAX_REF_SECS) if args.engine == "breeze" else clip,
+                      clip.with_suffix(".txt"))
+    if len(refs) > 1:
+        print(f"[index_speak] voices switched to in the text: {', '.join(n for n in refs if n)}")
 
     print(f"[index_speak] {len(text)} chars, {len(plan)} chunks. Loading {ENGINES[args.engine]}...")
     if args.engine == "breeze":
         if args.emotion != "neutral":
             print("[index_speak] note: --emotion only works with IndexTTS; ignored.")
+        # Breeze needs each reference clip's words (saved beside the clip after the first time).
+        refs = {v: (path, ref_transcript(path, side)) for v, (path, side) in refs.items()}
         # --fast is on unless --no-fast was given.
-        render, sr = load_breeze(ref_path, ref_transcript(ref_path, sidecar), fast=args.fast is not False)
+        render, sr = load_breeze(fast=args.fast is not False)
     else:
         if args.fast:
             print("[index_speak] note: --fast only applies to Breeze; ignored.")
-        render, sr = load_indextts(args, ref_path, gap_ms)
+        refs = {v: (path, None) for v, (path, _) in refs.items()}
+        render, sr = load_indextts(args, gap_ms)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # We always write a wav; it's transcoded to ogg afterward if requested.
     wav_path = args.out.with_suffix(".wav")
 
     gen_start = time.time()
-    pieces = []
-    for i, (chunk, pause_ms) in enumerate(plan, 1):
+    rendered = []                        # (speech or None, pause_ms, voice)
+    for i, (chunk, pause_ms, voice) in enumerate(plan, 1):
+        speech = None
         if chunk:
-            print(f"[index_speak] chunk {i}/{len(plan)}: {chunk[:70]}")
-            speech = trim_edges(render(chunk), sr)
+            who = f" [{voice}]" if voice else ""
+            print(f"[index_speak] chunk {i}/{len(plan)}{who}: {chunk[:70]}")
+            speech = trim_edges(render(chunk, *refs[voice]), sr)
             if not args.auto_breaths:
                 speech = tighten_pauses(speech, sr)
             if args.rate != 1.0:
                 speech = stretch(speech, sr, args.rate)
+        rendered.append((speech, pause_ms, voice))
+
+    # Different reference clips come out at different loudness. Turn every voice down to
+    # the quietest one's speech level (so nothing clips); the final normalization then
+    # lifts the whole file.
+    spoken = {}
+    for speech, _, voice in rendered:
+        if speech is not None:
+            spoken.setdefault(voice, []).append(speech)
+    if len(spoken) > 1:
+        levels = {v: speech_level_db(chunks, sr) for v, chunks in spoken.items()}
+        target = min(levels.values())
+        print("[index_speak] levelled voices: " + ", ".join(
+            f"{v or start_name} {target - db:+.1f} dB" for v, db in levels.items()))
+        rendered = [(s if s is None else (s * 10 ** ((target - levels[v]) / 20)).astype(np.int16), ms, v)
+                    for s, ms, v in rendered]
+    pieces, spans, pos = [], [], 0       # spans: where each voice's speech sits in the file
+    for speech, pause_ms, voice in rendered:
+        if speech is not None:
             pieces.append(speech)
+            spans.append((pos, pos + len(speech), voice))
+            pos += len(speech)
         pieces.append(np.zeros(sr * pause_ms // 1000, dtype=np.int16))
+        pos += len(pieces[-1])
     audio = np.concatenate(pieces)
     print(f"[index_speak] {len(audio) / sr:.1f}s of audio in {time.time() - gen_start:.1f}s")
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sr)
-        w.writeframes(audio.tobytes())
+    write_wav(wav_path, audio, sr)
 
     if args.normalize:
         normalize_loudness(wav_path, target_i=args.lufs)
+        if len(spoken) > 1:
+            # loudnorm's time-varying gain nudges the levelled voices apart again: measure
+            # each voice in the normalized file, correct the raw audio by the difference,
+            # and normalize once more.
+            done = read_wav(wav_path)
+            after = {v: speech_level_db([done[a:b] for a, b, vv in spans if vv == v], sr)
+                     for v in spoken}
+            mean = sum(after.values()) / len(after)
+            fixed = audio.astype(np.float64)
+            for a, b, v in spans:
+                fixed[a:b] *= 10 ** ((mean - after[v]) / 20)
+            write_wav(wav_path, np.clip(fixed, -32768, 32767).astype(np.int16), sr)
+            normalize_loudness(wav_path, target_i=args.lufs)
 
     outputs = [wav_path]
     if args.format in ("ogg", "both"):

@@ -34,6 +34,7 @@ Keep it a single invocation beginning with
   text are honored: `,,,` = breathe here, `[pause]`, `[pause 1.5]` — pass them
   through verbatim, don't "fix" `,,,` into a comma. `--my-breaths` = pause only
   at those marks and at line breaks (no automatic sentence/paragraph pauses).
+  `[voice-name]` in the text switches voices until the next switch.
 - Do NOT use `--format ogg` here (no point — it's not being saved).
 
 ## Be quiet — this is the most important rule

@@ -39,6 +39,7 @@ functions so the bare names work without `./`.
 | `[pause 2]`, `[pause 1.5s]`, `[pause 800ms]` | a pause of exactly that length | both |
 | a blank line | a 0.9 s paragraph pause (`--para-gap` changes it) | both |
 | a line break, with `--my-breaths` | a breath at every line break; each empty line adds another | both |
+| `[art-bell]`, `[jason-ellis-presenter]`, … | reads what follows in that voice, until the next switch — [details](#switch-voices-mid-text-conversations) | both |
 | `(sighs)`, `(laughs)`, `(clears throat)`, … | performs the sound — [full list below](#breeze-sounds-the-full-list) | Breeze |
 | `(whispers)`, `(shouts)` | says what follows quietly / loudly | Breeze |
 | Markdown (`#` headings, `**bold**`, links, code blocks) | stripped before reading | both |
@@ -156,6 +157,34 @@ Any listed voice name works as a bare flag, or via `--voice`:
 ./speak --calm "Same me, calmer read."
 ./speak --voice muted --file posts/my-post.md
 ```
+
+### Switch voices mid-text (conversations)
+
+Put a voice's name in square brackets and everything after it is read in that
+voice, until the next switch:
+
+```
+[jason-ellis-presenter] So I asked the obvious question.
+[art-bell] Somewhere over the high desert, the night is dark...
+And this line is still Art Bell.
+[jason-ellis-presenter] ,,, and that's where it gets weird.
+```
+
+- Use the exact names from `./speak --list-voices`. Text before the first
+  switch uses `--voice` (default `presenter`).
+- A switch ends the current chunk but adds no pause of its own: pauses still
+  come from sentences and paragraphs (default mode) or from your marks and line
+  breaks (`--my-breaths`). One speaker per line with `--my-breaths` reads like
+  a conversation.
+- Each voice is levelled to the same average loudness (within about 2 dB in
+  testing). Individual lines still vary a little, the same as with one voice,
+  and a `(whispers)` line stays quiet.
+- Switched-to voices use the first 15 s of their clip; `--ref-start` /
+  `--ref-secs` only apply to the starting voice.
+- A bracketed word that isn't a voice name (a typo, or a real `[sic]`) stays in
+  the text and you get a warning. `--dry-run` shows who reads what.
+- Works with both engines. With Breeze, a voice's first use also transcribes
+  its clip (see [Two cloned engines](#two-cloned-engines)).
 
 ### Add a new voice
 
