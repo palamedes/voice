@@ -241,7 +241,10 @@ class Jarvis:
     def serve(self):
         path = Path(SOCK_PATH)
         if path.exists():
-            path.unlink()  # stale socket from a dead server (the client pinged first)
+            if request({"cmd": "ping"}, timeout=2):
+                print("[jarvis] already running; not starting a second server", flush=True)
+                return
+            path.unlink()  # stale socket from a dead server
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(SOCK_PATH)
         srv.listen(8)
@@ -278,14 +281,20 @@ def request(obj: dict, timeout: float | None = 10.0) -> dict | None:
         return None
 
 
+def start_server(voice: str | None = None) -> bool:
+    """Start the server in the background unless one already answers. True if it started one."""
+    if request({"cmd": "ping"}, timeout=2):
+        return False
+    with open(LOG_PATH, "ab") as log:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--serve",
+                          "--voice", voice or DEFAULT_VOICE],
+                         stdout=log, stderr=log, start_new_session=True)
+    return True
+
+
 def ensure_running(voice: str | None) -> dict | None:
     """Ping the server, starting it if needed; return its status once Breeze is ready."""
-    status = request({"cmd": "ping"}, timeout=2)
-    if not status:
-        with open(LOG_PATH, "ab") as log:
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--serve",
-                              "--voice", voice or DEFAULT_VOICE],
-                             stdout=log, stderr=log, start_new_session=True)
+    if start_server(voice):
         print("[jarvis] starting the server (loading Breeze, ~25 s)...", file=sys.stderr)
     deadline = time.time() + 300   # first use of a voice also transcribes its clip
     while time.time() < deadline:

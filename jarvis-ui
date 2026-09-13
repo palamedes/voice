@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# jarvis-ui — a local web page for Jarvis: the voices, a panel of speakers who each
+# say a line on demand, and left/right conversations that Jarvis reads out loud.
+#
+#   ./jarvis-ui                     # serve http://127.0.0.1:8765 and open it in the browser
+#   ./jarvis-ui --port 9000 --no-open
+#
+# The page can start Jarvis itself. Ctrl+C stops the page; Jarvis keeps running
+# until you shut it down (from the page, or with ./jarvis --quit).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec "$HERE/breeze-tts/.venv/bin/python" "$HERE/scripts/jarvis_ui.py" "$@"

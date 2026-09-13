@@ -21,6 +21,7 @@ Only clone your own voice, or someone who has explicitly said yes.
 ./speak "Hello, this is me."          # cloned voice → saved to output/
 ./say "Hello, this is me."            # cloned voice → out loud, nothing saved
 ./jarvis "Hello, this is me."         # cloned voice, always loaded → out loud in a second or two
+./jarvis-ui                           # a local web page for Jarvis: voices, a panel, conversations
 ```
 
 They also exist as slash commands in a Claude Code session in this folder
@@ -138,6 +139,31 @@ levelled so they all play at about the same volume. The server stays up until
 `--quit` and holds about 8 GB of GPU memory while it runs, so quit it before a
 big `./speak` render or anything else GPU-heavy. It listens on
 `/tmp/jarvis.sock` (log: `/tmp/jarvis.log`).
+
+### The Jarvis page: a panel of voices and conversations
+
+`./jarvis-ui` opens a small local web page for Jarvis
+(`http://127.0.0.1:8765`), handy for giving each character in a story or a
+D&D session its own voice:
+
+- **Header:** Jarvis's status, plus Start, Stop talking and Shut down. Esc
+  also stops talking.
+- **Voices:** every voice in `voice_samples/`. Click one to add it to the
+  panel; drop new clips into `voice_samples/` and press Reload.
+- **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
+  press Enter, and Jarvis says it in that voice. L / R put that speaker on the
+  left or right of the conversation.
+- **Conversation:** iMessage-style bubbles between a left and a right voice.
+  Type a line and press Enter: it's spoken right away and the side flips, so a
+  back-and-forth is just typing (Tab switches side by hand). Click a bubble to
+  hear it again. **Play all** reads the whole exchange with the voice switches
+  and the beats between speakers; **Copy as script** gives you the
+  `[voice]`-marked text to render to a file with `./speak --file` (quit
+  Jarvis first, since both need the GPU).
+- The panel and the conversation are remembered in the browser.
+
+The page only listens on 127.0.0.1 and only takes requests from itself.
+Ctrl+C stops the page; Jarvis keeps running until you shut it down.
 
 ## Voices
 
@@ -364,9 +390,11 @@ words, `--text` or `--file`; `--voice NAME` or any voice name as a bare flag
 ## Layout
 
 ```
-speak, say, jarvis, merge    bash wrappers (see above)
+speak, say, jarvis, jarvis-ui, merge    bash wrappers (see above)
 scripts/index_speak.py    cloned-voice narration (Breeze TTS 2, or IndexTTS-2 with --indextts)
 scripts/jarvis_daemon.py  warm Breeze server behind jarvis
+scripts/jarvis_ui.py      the local web server behind jarvis-ui
+ui/jarvis.html            the Jarvis page itself
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)

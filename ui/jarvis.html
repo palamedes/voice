@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --card: #12151b; --line: #262b36; --field: #0c0e12;
+    --text: #e8e9ed; --muted: #8b91a1; --accent: #7c9cff;
+    --left: #2a2f3a; --right: #2f6df6; --ok: #3ecf8e; --warn: #f5b44a; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
+           padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 1.2rem; margin: 0 .4rem 0 0; }
+  h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 0 0 .6rem; }
+  .pill { padding: .2rem .75rem; border-radius: 999px; font-size: .85rem;
+          background: var(--line); color: var(--muted); }
+  .pill.ok { background: #12352a; color: var(--ok); }
+  .pill.loading { background: #3a2e12; color: var(--warn); }
+  .pill.err { background: #3a1616; color: var(--err); }
+  button { font: inherit; color: var(--text); background: var(--line); border: 1px solid #333a48;
+           border-radius: 8px; padding: .35rem .8rem; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.small { padding: .15rem .5rem; font-size: .85rem; }
+  input, select { font: inherit; color: var(--text); background: var(--field);
+                  border: 1px solid var(--line); border-radius: 8px; padding: .4rem .6rem;
+                  width: 100%; min-width: 0; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  main { display: grid; grid-template-columns: 230px minmax(0, 1fr) minmax(0, 1.3fr);
+         gap: 1rem; padding: 1rem; height: calc(100vh - 62px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+            padding: .8rem; display: flex; flex-direction: column; min-height: 0; }
+  .empty { color: var(--muted); font-size: .9rem; text-align: center; margin: auto; padding: 1rem; }
+
+  /* voices */
+  #voices { list-style: none; margin: .5rem 0; padding: 0; overflow: auto; flex: 1; }
+  #voices li { display: flex; justify-content: space-between; align-items: center; gap: .4rem;
+               padding: .3rem .2rem; border-bottom: 1px solid var(--line); }
+  .vname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* panel */
+  #panel { overflow: auto; display: grid; gap: .6rem; align-content: start; flex: 1; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: .6rem; background: var(--card); }
+  .card .top { display: flex; gap: .35rem; align-items: center; }
+  .card .label { font-weight: 600; background: transparent; border-color: transparent; padding: .2rem .3rem; }
+  .card .label:focus { border-color: var(--line); }
+  .card .voice { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+  .card form { display: flex; gap: .4rem; margin-top: .5rem; }
+
+  /* conversation */
+  .sides { display: flex; gap: .6rem; }
+  .sides label { flex: 1; font-size: .8rem; color: var(--muted); display: grid; gap: .2rem; }
+  #thread { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: .35rem;
+            padding: .6rem 2rem; margin: .6rem 0; border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line); }
+  .row { display: flex; flex-direction: column; max-width: 75%; position: relative; }
+  .row.left { align-self: flex-start; }
+  .row.right { align-self: flex-end; align-items: flex-end; }
+  .who { font-size: .72rem; color: var(--muted); margin: 0 .7rem .1rem; }
+  .bubble { padding: .5rem .8rem; border-radius: 18px; cursor: pointer;
+            white-space: pre-wrap; overflow-wrap: anywhere; }
+  .left .bubble { background: var(--left); border-bottom-left-radius: 6px; }
+  .right .bubble { background: var(--right); color: #fff; border-bottom-right-radius: 6px; }
+  .bubble:hover { filter: brightness(1.15); }
+  .del { position: absolute; bottom: .3rem; padding: 0 .35rem; background: transparent;
+         border: none; color: var(--muted); opacity: 0; }
+  .left .del { right: -1.8rem; }
+  .right .del { left: -1.8rem; }
+  .row:hover .del, .del:focus { opacity: 1; }
+  #composer { display: flex; gap: .4rem; }
+  .side { white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+  .side.right { background: var(--right); border-color: var(--right); color: #fff; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .6rem; }
+  .check { font-size: .85rem; color: var(--muted); display: flex; gap: .35rem; align-items: center; }
+  .check input { width: auto; }
+
+  body.not-ready .speaks { opacity: .55; }
+  .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+           background: #333a48; padding: .5rem 1rem; border-radius: 8px;
+           opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body class="not-ready">
+<header>
+  <h1>Jarvis</h1>
+  <span id="status" class="pill">checking…</span>
+  <button id="start" type="button">Start Jarvis</button>
+  <button id="stop" type="button" title="Esc">Stop talking</button>
+  <button id="quit" type="button">Shut down</button>
+</header>
+
+<main>
+  <section>
+    <h2>Voices</h2>
+    <input id="search" type="search" placeholder="Filter…" aria-label="Filter voices">
+    <ul id="voices"></ul>
+    <button id="reload" type="button" class="small">Reload list</button>
+  </section>
+
+  <section>
+    <h2>Panel</h2>
+    <div id="panel" class="speaks"></div>
+  </section>
+
+  <section>
+    <h2>Conversation</h2>
+    <div class="sides">
+      <label>Left <select id="left"></select></label>
+      <label>Right <select id="right"></select></label>
+    </div>
+    <div id="thread" class="speaks"></div>
+    <form id="composer" autocomplete="off">
+      <button id="side" type="button" class="side left" title="Switch side (Tab)"></button>
+      <input id="msg" placeholder="Type a line — Enter sends, Tab switches side" aria-label="Next line">
+      <button type="submit">Send</button>
+    </form>
+    <div class="actions">
+      <button id="play-all" type="button">▶ Play all</button>
+      <button id="copy" type="button">Copy as script</button>
+      <button id="clear" type="button">Clear</button>
+      <label class="check"><input id="autospeak" type="checkbox"> speak each line as I add it</label>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (selector) => document.querySelector(selector);
+
+// Build elements with text via textContent, never innerHTML.
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (key === "class") node.className = value;
+    else node.setAttribute(key, value);
+  }
+  for (const child of [].concat(children)) {
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+// ---- state, remembered in this browser -----------------------------------------
+const KEY = "jarvis-ui";
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+}
+const state = Object.assign(
+  { panel: [], left: "", right: "", lines: [], side: "left", autospeak: true }, loadState());
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
+}
+
+let voices = [];
+let ready = false;
+let startingSince = 0;
+const starting = () => Date.now() - startingSince < 60000;
+
+// ---- talking to the page's server -----------------------------------------------
+async function api(path, body) {
+  const options = body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  };
+  const response = await fetch(path, options);
+  return response.json();
+}
+
+let toastTimer;
+function toast(message) {
+  const box = $("#toast");
+  box.textContent = message;
+  box.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.remove("show"), 3500);
+}
+
+async function say(voice, text) {
+  if (!text.trim()) return false;
+  if (!ready) { toast("Start Jarvis first (top left)"); return false; }
+  try {
+    const reply = await api("/api/say", { voice, text });
+    if (!reply.ok) toast(reply.error || "Jarvis didn't answer");
+    return Boolean(reply.ok);
+  } catch {
+    toast("The page's server isn't running");
+    return false;
+  }
+}
+
+// ---- Jarvis status ----------------------------------------------------------------
+async function refreshStatus() {
+  let s;
+  try { s = await api("/api/status"); } catch { s = { pageDown: true }; }
+  ready = Boolean(s.running && s.ready && !s.error);
+  if (s.running) startingSince = 0;
+  const loading = !ready && !s.error && (s.running || starting());
+  const pill = $("#status");
+  pill.className = "pill " + (ready ? "ok" : s.error ? "err" : loading ? "loading" : "");
+  pill.textContent = s.pageDown ? "page server stopped"
+    : s.error ? "error: " + s.error
+    : ready ? "ready · " + labelFor(s.voice)
+    : loading ? "loading Breeze…" : "not running";
+  $("#start").disabled = Boolean(s.running || starting() || s.pageDown);
+  $("#stop").disabled = !s.running;
+  $("#quit").disabled = !s.running;
+  document.body.classList.toggle("not-ready", !ready);
+}
+
+$("#start").addEventListener("click", async () => {
+  startingSince = Date.now();
+  refreshStatus();
+  try { await api("/api/start", {}); }
+  catch { startingSince = 0; toast("Couldn't reach the page's server"); }
+});
+$("#stop").addEventListener("click", () => api("/api/stop", {}).catch(() => {}));
+$("#quit").addEventListener("click", async () => {
+  if (!confirm("Shut Jarvis down? That frees the GPU memory; starting again takes ~25 s.")) return;
+  await api("/api/quit", {}).catch(() => {});
+  refreshStatus();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") api("/api/stop", {}).catch(() => {});
+});
+
+// ---- voices ---------------------------------------------------------------------------
+async function loadVoices() {
+  try { voices = (await api("/api/voices")).voices; } catch { voices = []; }
+  renderVoices();
+  renderSides();
+}
+
+function renderVoices() {
+  const query = $("#search").value.trim().toLowerCase();
+  const shown = voices.filter((v) => v.toLowerCase().includes(query));
+  const list = $("#voices");
+  list.replaceChildren(...shown.map((voice) => {
+    const added = state.panel.some((m) => m.voice === voice);
+    return el("li", {}, [
+      el("span", { class: "vname", title: voice }, voice),
+      el("button", { type: "button", class: "small", title: added ? "Already on the panel" : "Add to the panel",
+                     onclick: () => addToPanel(voice) }, added ? "✓" : "+ panel"),
+    ]);
+  }));
+  if (!shown.length) list.append(el("li", { class: "empty" }, voices.length ? "No match" : "No voices found"));
+}
+$("#search").addEventListener("input", renderVoices);
+$("#reload").addEventListener("click", loadVoices);
+
+// ---- panel ------------------------------------------------------------------------------
+function labelFor(voice) {
+  const member = state.panel.find((m) => m.voice === voice);
+  return (member && member.label) || voice || "—";
+}
+
+function addToPanel(voice) {
+  if (!state.panel.some((m) => m.voice === voice)) {
+    state.panel.push({ voice, label: voice });
+    if (!state.left) state.left = voice;
+    else if (!state.right && state.left !== voice) state.right = voice;
+  }
+  save();
+  render();
+}
+
+function removeFromPanel(voice) {
+  state.panel = state.panel.filter((m) => m.voice !== voice);
+  save();
+  render();
+}
+
+function renderPanel() {
+  const panel = $("#panel");
+  if (!state.panel.length) {
+    panel.replaceChildren(el("p", { class: "empty" }, "Add voices from the list to build your cast."));
+    return;
+  }
+  panel.replaceChildren(...state.panel.map((member) => {
+    const line = el("input", { placeholder: `Something for ${member.label} to say…`,
+                               "aria-label": `Line for ${member.label}` });
+    const label = el("input", { class: "label", value: member.label, "aria-label": "Name on the panel" });
+    label.addEventListener("input", () => {
+      member.label = label.value.trim() || member.voice;
+      save();
+      renderSides();
+      renderThread();
+    });
+    return el("div", { class: "card" }, [
+      el("div", { class: "top" }, [
+        label,
+        el("span", { class: "voice", title: "voice file" }, member.voice),
+        el("button", { type: "button", class: "small", title: "Put on the left of the conversation",
+                       onclick: () => setSide("left", member.voice) }, "L"),
+        el("button", { type: "button", class: "small", title: "Put on the right of the conversation",
+                       onclick: () => setSide("right", member.voice) }, "R"),
+        el("button", { type: "button", class: "small", title: "Remove from the panel",
+                       onclick: () => removeFromPanel(member.voice) }, "×"),
+      ]),
+      el("form", { autocomplete: "off", onsubmit: async (e) => {
+        e.preventDefault();
+        if (await say(member.voice, line.value)) line.value = "";
+      } }, [line, el("button", { type: "submit" }, "Say")]),
+    ]);
+  }));
+}
+
+// ---- conversation ------------------------------------------------------------------------
+function setSide(side, voice) {
+  state[side] = voice;
+  save();
+  renderSides();
+  renderThread();
+}
+
+function renderSides() {
+  const pool = state.panel.length ? state.panel.map((m) => m.voice) : voices;
+  for (const side of ["left", "right"]) {
+    const choices = [...new Set([...pool, ...(state[side] ? [state[side]] : [])])];
+    $("#" + side).replaceChildren(el("option", { value: "" }, "— pick a voice —"), ...choices.map((voice) => {
+      const name = labelFor(voice);
+      const option = el("option", { value: voice }, name === voice ? voice : `${name} (${voice})`);
+      option.selected = voice === state[side];
+      return option;
+    }));
+  }
+  renderSideButton();
+}
+for (const side of ["left", "right"]) {
+  $("#" + side).addEventListener("change", (e) => setSide(side, e.target.value));
+}
+
+function renderSideButton() {
+  const button = $("#side");
+  button.className = "side " + state.side;
+  button.textContent = state.side === "left" ? "◀ " + labelFor(state.left) : labelFor(state.right) + " ▶";
+}
+
+function toggleSide() {
+  state.side = state.side === "left" ? "right" : "left";
+  save();
+  renderSideButton();
+  $("#msg").focus();
+}
+$("#side").addEventListener("click", toggleSide);
+$("#msg").addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); toggleSide(); }
+});
+
+function renderThread() {
+  const thread = $("#thread");
+  if (!state.lines.length) {
+    thread.replaceChildren(el("p", { class: "empty" },
+      "Pick a left and a right voice, then type the conversation below."));
+    return;
+  }
+  thread.replaceChildren(...state.lines.map((line, i) => {
+    const voice = state[line.side];
+    return el("div", { class: "row " + line.side }, [
+      el("div", { class: "who" }, labelFor(voice)),
+      el("div", { class: "bubble", title: "Click to hear it again",
+                  onclick: () => say(voice, line.text) }, line.text),
+      el("button", { type: "button", class: "del", title: "Delete this line", onclick: () => {
+        state.lines.splice(i, 1);
+        save();
+        renderThread();
+      } }, "×"),
+    ]);
+  }));
+  thread.scrollTop = thread.scrollHeight;
+}
+
+$("#composer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("#msg");
+  const text = input.value.trim();
+  if (!text) return;
+  const side = state.side;
+  const voice = state[side];
+  if (!voice) { toast(`Pick a ${side} voice first`); return; }
+  state.lines.push({ side, text });
+  input.value = "";
+  state.side = side === "left" ? "right" : "left";   // conversations go back and forth
+  save();
+  renderThread();
+  renderSideButton();
+  if (state.autospeak) say(voice, text);
+});
+
+// The whole conversation as text with [voice] switches — what Jarvis and ./speak read.
+function script() {
+  return state.lines.map((line) => `[${state[line.side]}] ${line.text}`).join("\n");
+}
+
+$("#play-all").addEventListener("click", () => {
+  if (!state.lines.length) return toast("Nothing to play yet");
+  if (state.lines.some((line) => !state[line.side])) return toast("Pick both voices first");
+  say(null, script());
+});
+$("#copy").addEventListener("click", async () => {
+  if (!state.lines.length) return toast("Nothing to copy yet");
+  try {
+    await navigator.clipboard.writeText(script());
+    toast("Copied. Save it to a file and render with ./speak --file (quit Jarvis first).");
+  } catch {
+    toast("Couldn't copy (the browser blocked the clipboard)");
+  }
+});
+$("#clear").addEventListener("click", () => {
+  if (state.lines.length && confirm("Clear the whole conversation?")) {
+    state.lines = [];
+    save();
+    renderThread();
+  }
+});
+
+const autospeak = $("#autospeak");
+autospeak.checked = state.autospeak;
+autospeak.addEventListener("change", () => { state.autospeak = autospeak.checked; save(); });
+
+function render() {
+  renderVoices();
+  renderPanel();
+  renderSides();
+  renderThread();
+}
+
+render();
+loadVoices();
+refreshStatus();
+setInterval(refreshStatus, 2000);
+</script>
+</body>
+</html>
