@@ -24,8 +24,8 @@ Keep it a single invocation beginning with
 
 ## Inputs (same as /speak)
 - **Text**: from the args / pasted message / a named file. If none, ask what to say.
-- **Engine**: IndexTTS-2 by default; add `--breeze` for Breeze TTS 2 when asked
-  (same command, still auto-approved — the script re-launches itself in Breeze's venv).
+- **Engine**: Breeze TTS 2 by default (the script re-launches itself in Breeze's venv;
+  same command, still auto-approved); add `--indextts` for IndexTTS-2 when asked.
 - **Voice + window**: `--voice NAME` (`--list-voices`), or any voice name as a
   bare flag (`--calm`, `--muted`, `--presenter`, ...); `--ref-start SECS`,
   `--ref-secs SECS` (max 15s). Default voice `presenter`.

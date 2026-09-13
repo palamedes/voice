@@ -7,18 +7,21 @@ description: Narrate text in Jason's cloned voice (this voice project only). Use
 
 Generate audio of the user's text in `/home/jellis/Projects/voice`.
 
-## Default engine: IndexTTS-2 (the winner)
-Use `scripts/index_speak.py` (venv: `index-tts/.venv`). It clones Jason's voice
-well AND pronounces correctly (real g2p — fixed the "jarring" problem), and it
-is fed one sentence / marked phrase at a time with explicit pauses between. Default
-reference is a single clean clip (`voice_samples/processed/presenter.wav`).
+## Default engine: Breeze TTS 2 (Jason's pick, 2026-09-12)
+Use `scripts/index_speak.py`, always launched with the `index-tts/.venv` python —
+for Breeze it re-launches itself in `breeze-tts/.venv`. Text is fed one sentence /
+marked phrase at a time with explicit pauses between. Default reference is a single
+clean clip (`voice_samples/processed/presenter.wav`). The first use of a voice
+transcribes its reference into `<voice>.txt` beside the clip (Whisper). Breeze
+performs sounds written in parentheses — `(sighs)`, `(laughs)`, `(clears throat)`,
+`(whispers)`, `(shouts)`… (34 tags; exact spellings in README "Breeze sounds") —
+keep the user's parentheses as written, and don't add new ones to the text.
+Breeze runs in fast mode by default (~9 s warm-up, then ~5x faster rendering);
+`--no-fast` is the plain path — only if the user asks.
 
-**Second engine: Breeze TTS 2** — add `--breeze` (same script, same flags; it
-re-launches itself in `breeze-tts/.venv`). Use it when the user asks for Breeze.
-Roughly twice as slow. The first use of a voice transcribes its reference into
-`<voice>.txt` beside the clip (Whisper). `--emotion`/`--fp16`/`--seg-tokens`/
-`--gap-ms` are IndexTTS-only. Breeze performs `(sigh)`, `(laugh)`, `(cough)`,
-`(clears throat)` written in parentheses — don't add parentheses to the text.
+**Second engine: IndexTTS-2** — add `--indextts` when the user asks for it. It also
+clones Jason well, pronounces reliably, and has emotion presets; `--emotion`/`--fp16`/
+`--seg-tokens`/`--gap-ms` are IndexTTS-only.
 
 ## Inputs
 - **Text**: from the skill args, the pasted message, or a file the user names
@@ -57,15 +60,15 @@ Roughly twice as slow. The first use of a voice transcribes its reference into
        --file posts/<slug>.md \
        --out output/<slug>.wav
    ```
-   Add `--format ogg` if a compressed file is wanted. Long posts take a couple
-   minutes (~RTF 1.3); consider running in the background and reporting when done.
+   Add `--format ogg` if a compressed file is wanted. A 5-minute post takes a
+   couple of minutes; consider running in the background and reporting when done.
 4. Confirm the output path + duration, and tell the user to play it:
    `! ffplay -autoexit -nodisp output/<slug>.wav`  (or `.ogg`).
 
 ## Notes
 - Pronunciation is reliable; if a rare word is wrong, IndexTTS-2 supports
   pinyin-style annotation for fixes (see checkpoints/pinyin.vocab) — mainly Chinese.
-- Cloning engines: IndexTTS-2 (default) and Breeze TTS 2 (`--breeze`). F5-TTS,
+- Cloning engines: Breeze TTS 2 (default) and IndexTTS-2 (`--indextts`). F5-TTS,
   Zonos, CosyVoice3 and IndexTTS-2.5 were tried and removed. For a fast
   non-cloned voice use `/speak-fast` (Kokoro-82M).
 - Details + history in README.md / project memory.

@@ -3,14 +3,12 @@
 #
 #   ./speak hello world
 #   ./speak --calm "A calmer read of the same thing."
+#   ./speak --breeze --out output/intro.wav "Flags that take values work anywhere."
 #   ./speak --file posts/my-post.md
 #   ./speak --list-voices
 #
-# Two modes:
-#   * Plain text: leading --flags are passed through to index_speak.py, the
-#     rest is the text. Any voice name works as a flag (--calm, --muted, ...).
-#   * If the args carry their own input (--file, --text, --list-voices),
-#     everything is passed through verbatim, so all index_speak.py flags work.
+# Everything is passed straight to index_speak.py, which takes the text as plain
+# words, --text, or --file. Any voice name works as a flag (--calm, --muted, ...).
 # Saves a wav to output/ (unless you pass your own --out) and prints the path.
 # Doesn't play it — use ./say for that.
 set -euo pipefail
@@ -22,26 +20,10 @@ PY="$HERE/index-tts/.venv/bin/python"
 SCRIPT="$HERE/scripts/index_speak.py"
 out="$HERE/output/speak_$(date +%Y%m%d_%H%M%S).wav"
 
-# Pass-through mode. The default --out goes first so a user-supplied --out
-# later in the args wins (argparse keeps the last occurrence).
-for a in "$@"; do
-  case "$a" in
-    --file|--file=*|--text|--text=*|--list-voices)
-      exec "$PY" "$SCRIPT" --out "$out" "$@" ;;
-  esac
-done
-
-# Plain-text mode.
-flags=()
-while [ $# -gt 0 ] && [[ "$1" == --* ]]; do
-  flags+=("$1")
-  shift
-done
-
-text="$*"
-if [ -z "$text" ]; then
-  echo "usage: speak [--voice-flags] <text to narrate>" >&2
+if [ $# -eq 0 ]; then
+  echo "usage: speak [flags] <text to narrate>   (or --file PATH)" >&2
   exit 1
 fi
 
-exec "$PY" "$SCRIPT" --out "$out" ${flags[@]+"${flags[@]}"} --text "$text"
+# The default --out goes first so a user-supplied --out wins (argparse keeps the last).
+exec "$PY" "$SCRIPT" --out "$out" "$@"

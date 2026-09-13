@@ -3,13 +3,13 @@
 index_speak.py — narrate text in Jason's cloned voice.
 
 Two cloning engines behind the same pacing:
-  --engine indextts (default)  IndexTTS-2: strong zero-shot cloning, accurate English
-                               pronunciation, emotion control decoupled from the speaker.
-  --engine breeze / --breeze   Breeze TTS 2: runs in its own venv (breeze-tts/.venv), so
-                               this script re-launches itself there. It also needs the
-                               reference clip's exact words: they're transcribed once with
-                               Whisper into <voice>.txt beside the clip (edit that file if
-                               a word is wrong).
+  --engine breeze (default)       Breeze TTS 2: runs in its own venv (breeze-tts/.venv), so
+                                  this script re-launches itself there. It also needs the
+                                  reference clip's exact words: they're transcribed once with
+                                  Whisper into <voice>.txt beside the clip (edit that file if
+                                  a word is wrong).
+  --engine indextts / --indextts  IndexTTS-2: strong zero-shot cloning, accurate English
+                                  pronunciation, emotion control decoupled from the speaker.
 
 Pacing: by default (--auto-breaths) text is fed one sentence at a time with real
 pauses between (longer at blank lines), and ,,, / [breath] / [pause N] marks add
@@ -26,10 +26,12 @@ Reference voice: a single clean clip works best (default: presenter).
 Emotion (optional): --emotion neutral|happy|sad|angry (subtle by default).
 """
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from pathlib import Path
 
@@ -160,6 +162,27 @@ def stretch(audio, sr, rate):
     return np.frombuffer(out, dtype=np.int16)
 
 
+@contextlib.contextmanager
+def muted_output():
+    """Silence stdout/stderr at the file-descriptor level, which also catches output from
+    C extensions and subprocesses. Exceptions still surface once output is restored."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = os.dup(1), os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in (*saved, devnull):
+            os.close(fd)
+
+
 def ref_transcript(clip: Path, sidecar=None):
     """The exact words spoken in the reference clip (Breeze TTS 2 needs them). Read from
     the sidecar .txt if there is one; otherwise transcribed with the cached Whisper model
@@ -177,9 +200,11 @@ def ref_transcript(clip: Path, sidecar=None):
     name = "openai/whisper-large-v3-turbo"
     proc = WhisperProcessor.from_pretrained(name)
     model = WhisperForConditionalGeneration.from_pretrained(name, dtype=torch.float16).to("cuda")
-    feats = proc(audio, sampling_rate=16000, return_tensors="pt").input_features.to("cuda", torch.float16)
+    inputs = proc(audio, sampling_rate=16000, return_tensors="pt", return_attention_mask=True)
     with torch.no_grad():
-        ids = model.generate(feats, language="en", task="transcribe")
+        ids = model.generate(inputs.input_features.to("cuda", torch.float16),
+                             attention_mask=inputs.attention_mask.to("cuda"),
+                             language="en", task="transcribe")
     text = proc.batch_decode(ids, skip_special_tokens=True)[0].strip()
     del model
     torch.cuda.empty_cache()
@@ -212,23 +237,46 @@ def load_indextts(args, ref_path, gap_ms):
     return render, 22050
 
 
-def load_breeze(ref_path, ref_text):
-    """Breeze TTS 2 -> (render(text) -> int16 samples, sample rate). Needs breeze-tts/.venv."""
+def load_breeze(ref_path, ref_text, fast=False):
+    """Breeze TTS 2 -> (render(text) -> int16 samples, sample rate). Needs breeze-tts/.venv.
+    fast=True captures CUDA graphs up front: a slower start, then much less per-chunk overhead."""
     sys.path.insert(0, str(BREEZE))
+    import functools
+    from dataclasses import replace
+    import breeze_infer.templates as templates
     from breeze_infer.runtime import (load_runtime, resolve_device, set_all_seeds,
                                       update_generation_config_for_breeze)
     from breeze_infer.templates import get_template, prepare_inputs, select_template_name
     from models.fast_streaming import FastBreezeStreamingRuntime, FastStreamingConfig
+    from models.warmup_profile import load_warmup_profile
 
-    tokenizer, model, audio_tokenizer = load_runtime(BREEZE / "breeze-tts-2", device=resolve_device(),
-                                                     attn_implementation="eager")
+    # Its audio-tokenizer package nags about SoX and flash-attn on import (for a tokenizer
+    # Breeze doesn't use), and model loading prints debug lines; keep all that quiet.
+    with muted_output():
+        tokenizer, model, audio_tokenizer = load_runtime(BREEZE / "breeze-tts-2", device=resolve_device(),
+                                                         attn_implementation="eager")
     update_generation_config_for_breeze(model)
-    # Same settings as Breeze's own infer.py (eager path, no CUDA-graph warmup).
-    config = FastStreamingConfig(max_new_tokens=1500, max_seq_len=2048, fast_all=None,
-                                 fast_text_encoder=False, fast_backbone_prefill=False,
-                                 fast_backbone_decode=False, fast_depth_decoder=False,
-                                 fast_codec=False, repetition_penalty=1.1)
+    # prepare_inputs re-encodes the reference clip for every chunk; it never changes in a run.
+    templates._encode_prompt_audio = functools.lru_cache(maxsize=None)(templates._encode_prompt_audio)
+
+    # Breeze's own infer.py settings. With fast, only the per-frame stages (backbone decode,
+    # depth decoder, codec) run as CUDA graphs: that loop is where the time goes. The text
+    # encoder and prefill run once per chunk, so they stay eager, which also avoids their
+    # prompt-length buckets (the stock ones stop short of a cloning prompt) and their memory.
+    config = FastStreamingConfig(max_new_tokens=1500, max_seq_len=2048, repetition_penalty=1.1,
+                                 fast_backbone_decode=fast, fast_depth_decoder=fast, fast_codec=fast)
     runtime = FastBreezeStreamingRuntime(model, audio_tokenizer, config, tokenizer=tokenizer)
+    if runtime.fast_enabled:
+        # Warm only the one-branch (CFG 1) graphs we use; unfrozen, anything else is
+        # captured on first use instead of failing.
+        profile = replace(load_warmup_profile(BREEZE / "configs" / "fast.json"),
+                          cfg_scales=(1.0,), codec_chunk_frames=runtime.codec_chunk_frames,
+                          freeze_after_warmup=False,
+                          backbone_decode_branch_batch_sizes=(1,), depth_decoder_batch_sizes=(1,))
+        t0 = time.time()
+        with muted_output():
+            runtime.warmup_from_profile(profile)
+        print(f"[index_speak] Breeze fast path warmed up in {time.time() - t0:.1f}s")
 
     def render(text):
         request = {"id": "chunk", "text": text, "speaker": "S0",
@@ -250,10 +298,14 @@ def main() -> int:
     src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--file", type=Path)
     src.add_argument("--text", type=str)
+    ap.add_argument("words", nargs="*", help="The text to read, as plain words (instead of --text/--file).")
     ap.add_argument("--out", type=Path, default=Path("output/index_out.wav"))
-    ap.add_argument("--engine", choices=list(ENGINES), default="indextts",
-                    help="Cloning engine: indextts (IndexTTS-2, default) or breeze (Breeze TTS 2). "
+    ap.add_argument("--engine", choices=list(ENGINES), default="breeze",
+                    help="Cloning engine: breeze (Breeze TTS 2, default) or indextts (IndexTTS-2). "
                          "Bare --breeze / --indextts work too.")
+    ap.add_argument("--fast", action=argparse.BooleanOptionalAction, default=None,
+                    help="Breeze only, on by default: ~9 s of CUDA-graph warm-up, then roughly 5x faster "
+                         "rendering. --no-fast uses Breeze's plain (eager) path.")
     ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Any voice name "
                     "also works as a bare flag, e.g. --calm. Default: presenter.")
     ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
@@ -294,7 +346,12 @@ def main() -> int:
                     help="Loudness-normalize output to a consistent level (default on).")
     ap.add_argument("--lufs", type=float, default=-16.0, help="Target integrated loudness (LUFS).")
     ap.add_argument("--no-markdown", action="store_true")
-    args = ap.parse_args(expand_voice_shorthand(sys.argv[1:]))
+    # Intermixed, so plain words and flags (with or without values) can come in any order.
+    args = ap.parse_intermixed_args(expand_voice_shorthand(sys.argv[1:]))
+    if args.words:
+        if args.text is not None or args.file is not None:
+            ap.error("give the text as plain words or with --text/--file, not both")
+        args.text = " ".join(args.words)
 
     if args.list_voices:
         voices = list_voices()
@@ -304,7 +361,8 @@ def main() -> int:
         return 0
 
     if args.text is None and args.file is None:
-        print("ERROR: provide --text or --file (or --list-voices).", file=sys.stderr)
+        print("ERROR: nothing to read: give the text as words, --text, or --file (or --list-voices).",
+              file=sys.stderr)
         return 1
 
     breeze_py = BREEZE / ".venv" / "bin" / "python"
@@ -362,14 +420,18 @@ def main() -> int:
     if args.engine == "breeze":
         if args.emotion != "neutral":
             print("[index_speak] note: --emotion only works with IndexTTS; ignored.")
-        render, sr = load_breeze(ref_path, ref_transcript(ref_path, sidecar))
+        # --fast is on unless --no-fast was given.
+        render, sr = load_breeze(ref_path, ref_transcript(ref_path, sidecar), fast=args.fast is not False)
     else:
+        if args.fast:
+            print("[index_speak] note: --fast only applies to Breeze; ignored.")
         render, sr = load_indextts(args, ref_path, gap_ms)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # We always write a wav; it's transcoded to ogg afterward if requested.
     wav_path = args.out.with_suffix(".wav")
 
+    gen_start = time.time()
     pieces = []
     for i, (chunk, pause_ms) in enumerate(plan, 1):
         if chunk:
@@ -381,11 +443,13 @@ def main() -> int:
                 speech = stretch(speech, sr, args.rate)
             pieces.append(speech)
         pieces.append(np.zeros(sr * pause_ms // 1000, dtype=np.int16))
+    audio = np.concatenate(pieces)
+    print(f"[index_speak] {len(audio) / sr:.1f}s of audio in {time.time() - gen_start:.1f}s")
     with wave.open(str(wav_path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(sr)
-        w.writeframes(np.concatenate(pieces).tobytes())
+        w.writeframes(audio.tobytes())
 
     if args.normalize:
         normalize_loudness(wav_path, target_i=args.lufs)

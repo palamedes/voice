@@ -6,11 +6,12 @@ voice. Runs entirely locally on an NVIDIA GPU — nothing is uploaded anywhere.
 
 Three engines:
 
-- **Cloned voice** ([IndexTTS-2](https://github.com/index-tts/index-tts)) —
-  sounds like you. Slow: roughly a minute of compute per paragraph. The default.
-- **Cloned voice, take two** ([Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2)) —
-  also sounds like you, with its own delivery. Add `--breeze` to `./speak` or
-  `./say`. About twice as slow as IndexTTS-2; non-commercial license.
+- **Cloned voice** ([Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2)) —
+  sounds like you, and can laugh, sigh or clear its throat on cue. The default.
+  Renders in well under real time after a ~9 s warm-up. Non-commercial license.
+- **Cloned voice, take two** ([IndexTTS-2](https://github.com/index-tts/index-tts)) —
+  also sounds like you, with its own delivery and emotion presets. Add
+  `--indextts` to `./speak` or `./say`.
 - **Fast voice** ([Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)) —
   stock synthetic voices, near-real-time. Same commands with `-fast` on the end.
 
@@ -29,14 +30,31 @@ All four also exist as slash commands in a Claude Code session in this folder
 (`/speak`, `/say`, `/speak-fast`, `/say-fast`, plus `/merge`), and as fish
 functions so the bare names work without `./`.
 
+## Cheat sheet: everything you can write in the text
+
+| Write | What it does | Engine |
+|---|---|---|
+| `,,,` or `[breath]` | a breath: 0.4 s pause (`--breath-gap` changes it) | both |
+| `[pause]` | a 0.7 s pause | both |
+| `[pause 2]`, `[pause 1.5s]`, `[pause 800ms]` | a pause of exactly that length | both |
+| a blank line | a 0.9 s paragraph pause (`--para-gap` changes it) | both |
+| a line break, with `--my-breaths` | a breath at every line break; each empty line adds another | both |
+| `(sighs)`, `(laughs)`, `(clears throat)`, … | performs the sound — [full list below](#breeze-sounds-the-full-list) | Breeze |
+| `(whispers)`, `(shouts)` | says what follows quietly / loudly | Breeze |
+| Markdown (`#` headings, `**bold**`, links, code blocks) | stripped before reading | both |
+
+A mark replaces the automatic pause at that spot, and back-to-back marks add
+up. Everything else — voice, engine, speed, pause lengths, output format — is a
+flag; see the [options reference](#options-reference).
+
 ## Two cloned engines
 
-`./speak` and `./say` use IndexTTS-2 unless you add `--breeze`:
+`./speak` and `./say` use Breeze TTS 2 unless you add `--indextts`:
 
 ```sh
-./speak "Same words, IndexTTS-2."                  # default
-./speak --breeze "Same words, Breeze TTS 2."
-./say --breeze --my-breaths --file posts/my-post.md
+./speak "Same words, Breeze TTS 2."                # default
+./speak --indextts "Same words, IndexTTS-2."
+./say --my-breaths --file posts/my-post.md
 ```
 
 Everything else — voices, `,,,` / `[pause]` marks, `--my-breaths`, `--rate`,
@@ -44,12 +62,58 @@ Everything else — voices, `,,,` / `[pause]` marks, `--my-breaths`, `--rate`,
 `--seg-tokens` and `--gap-ms` are IndexTTS-only. The long form is
 `--engine breeze` / `--engine indextts`.
 
+Breeze renders in "fast" mode by default: it spends about 9 s up front
+recording the GPU work for its per-frame loop, then renders roughly 5x faster
+than its plain mode — a 38-second excerpt took 14 s instead of 77 s, and a
+5-minute post takes a couple of minutes instead of ten. It's the same model and
+voice; only how the GPU work is scheduled changes. `--no-fast` switches to the
+plain mode, e.g. to compare if a render ever sounds off.
+
 Breeze needs the exact words of the reference clip. The first time you use a
 voice with it, Whisper transcribes the clip and saves the words next to it
 (e.g. `voice_samples/processed/presenter.txt`); if Whisper got a word wrong,
-fix the file. Breeze also performs vocal events written in parentheses —
-`(sigh)`, `(laugh)`, `(cough)`, `(clears throat)` — so keep ordinary asides
-out of parentheses when using it.
+fix the file.
+
+### Breeze sounds: the full list
+
+Write a sound in parentheses and Breeze performs it, in the voice you're using:
+
+```sh
+./speak "So they moved the goalposts again. (sighs) Of course they did."
+./speak "(clears throat) Let's begin."
+./speak "And that, apparently, was the plan. (chuckles)"
+./speak "(whispers) Don't tell anyone I said this."
+```
+
+These are the 34 tags from Breeze's documentation, spelled exactly as it
+expects them:
+
+| Kind | Tags |
+|---|---|
+| Laughter | `(laughs)` `(chuckles)` `(giggles)` |
+| Crying and pain | `(crying)` `(sobs)` `(whimpers)` `(groans)` `(moans)` |
+| Breathing | `(sighs)` `(gasps)` `(inhales)` `(exhales)` `(breathing heavily)` |
+| Delivery | `(whispers)` `(shouts)` `(screams)` `(singing)` `(humming)` `(stutters)` `(pause)` |
+| Throat and nose | `(clears throat)` `(coughs)` `(sniffs)` |
+| Mouth | `(smacks lips)` `(clicks tongue)` |
+| Body | `(yawns)` `(sneezes)` `(hiccups)` `(burps)` `(gulps)` `(gags)` |
+| Reactions | `(grunts)` `(scoffs)` `(snorts)` |
+
+Things to know:
+
+- The model's own README uses plain forms — `(laugh)`, `(sigh)`, `(cough)`,
+  `(clears throat)` — and those work too. The table above comes from
+  BreezeBlue's docs for its hosted model, which uses the "-s" spellings.
+- Tested on this setup, Breeze recognized all of them (none was ever read out
+  as a word), and by ear most of them work — some sound good, some come out
+  funny, a few are bad. Try a sound on a line by itself before relying on it in
+  a post. `(singing)` and `(humming)` run long (4–8 seconds).
+- `(whispers)` and `(shouts)` change how the *following* words are said
+  (noticeably quieter / louder) rather than adding a noise.
+- `(pause)` is Breeze's own pause with no fixed length; for exact timing use
+  `[pause 1.5]` instead.
+- Because anything in parentheses may be taken as a sound, keep ordinary asides
+  out of parentheses when using Breeze. (IndexTTS just reads them as text.)
 
 ## Jarvis mode
 
@@ -175,8 +239,6 @@ prints the chunks and pauses without loading the model).
 ./speak --file posts/my-post.md --sentence-gap 600 --para-gap 1200 --breath-gap 400
 ```
 
-In plain-text mode, flags that take a value need the `=` form (`--rate=0.9`).
-
 ### Your breaths only
 
 By default the sentence and paragraph pauses are automatic, with your marks on
@@ -206,9 +268,14 @@ silence is removed; the voice itself isn't touched.
 `./speak` / `./say` (wrappers around `scripts/index_speak.py`, the cloned voices):
 
 ```
-  --file PATH / --text TEXT   what to read (markdown auto-stripped)
+  WORDS / --text TEXT / --file PATH
+                              what to read: plain words (flags can go anywhere
+                              around them), a --text string, or a file
+                              (markdown auto-stripped)
   --out PATH                  output path (default: output/index_out.wav)
-  --breeze / --engine NAME    indextts (IndexTTS-2, default) or breeze (Breeze TTS 2)
+  --indextts / --engine NAME  breeze (Breeze TTS 2, default) or indextts (IndexTTS-2)
+  --no-fast                   Breeze: skip fast mode (on by default: ~9 s
+                              warm-up, then ~5x faster rendering)
   --voice NAME                reference voice (default: presenter); any name
                               also works as a bare flag: --calm, --muted, ...
   --ref PATH                  explicit reference clip path (overrides --voice)

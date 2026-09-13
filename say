@@ -3,15 +3,13 @@
 #
 #   ./say hello world
 #   ./say --muted "Same words, muted voice."
+#   ./say --breeze --rate 0.9 "Flags that take values work anywhere."
 #   ./say --file posts/my-post.md
 #   ./say --list-voices
 #
-# Two modes:
-#   * Plain text: leading --flags are passed through to index_speak.py, the
-#     rest is the text. Any voice name works as a flag (--calm, --muted, ...).
-#   * If the args carry their own input (--file, --text, --list-voices),
-#     everything is passed through verbatim, so all index_speak.py flags work.
-# Plays through your speakers (ffplay) and saves nothing permanent.
+# Everything is passed straight to index_speak.py, which takes the text as plain
+# words, --text, or --file. Plays through your speakers (ffplay) and saves
+# nothing permanent.
 set -euo pipefail
 
 # Resolve the project dir from this script's location, so it works no matter
@@ -20,32 +18,22 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PY="$HERE/index-tts/.venv/bin/python"
 SCRIPT="$HERE/scripts/index_speak.py"
 
-# --list-voices prints to stdout, so it must skip the quiet redirect below.
+if [ $# -eq 0 ]; then
+  echo "usage: say [flags] <text to speak>   (or --file PATH)" >&2
+  exit 1
+fi
+
+# --list-voices prints to stdout, so it must skip the quiet log below.
 for a in "$@"; do
   case "$a" in
     --list-voices) exec "$PY" "$SCRIPT" "$@" ;;
   esac
 done
 
-# Pass-through mode (input supplied via --file/--text).
-for a in "$@"; do
-  case "$a" in
-    --file|--file=*|--text|--text=*)
-      exec "$PY" "$SCRIPT" --out /tmp/say.wav --play "$@" >/dev/null 2>&1 ;;
-  esac
-done
-
-# Plain-text mode.
-flags=()
-while [ $# -gt 0 ] && [[ "$1" == --* ]]; do
-  flags+=("$1")
-  shift
-done
-
-text="$*"
-if [ -z "$text" ]; then
-  echo "usage: say [--voice-flags] <text to speak>" >&2
+# The model's chatter goes to a log; if something fails, show why instead of staying silent.
+log=/tmp/say.log
+if ! "$PY" "$SCRIPT" --out /tmp/say.wav --play "$@" >"$log" 2>&1; then
+  echo "say: failed; last lines of $log:" >&2
+  tail -n 5 "$log" >&2
   exit 1
 fi
-
-exec "$PY" "$SCRIPT" ${flags[@]+"${flags[@]}"} --text "$text" --out /tmp/say.wav --play >/dev/null 2>&1
