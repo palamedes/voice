@@ -47,7 +47,7 @@ clones Jason well, pronounces reliably, and has emotion presets; `--emotion`/`--
   line breaks and blank lines exactly when writing text to `posts/`.
   `--auto-breaths` is the default.
   `[voice-name]` (exact name from `--list-voices`) switches voices from that point
-  until the next switch — keep these verbatim too.
+  until the next switch — mid-line is fine; keep these verbatim too.
   `--dry-run` prints the chunks + pauses (and who reads each) without rendering.
 
 ## Steps
@@ -71,6 +71,6 @@ clones Jason well, pronounces reliably, and has emotion presets; `--emotion`/`--
 - Pronunciation is reliable; if a rare word is wrong, IndexTTS-2 supports
   pinyin-style annotation for fixes (see checkpoints/pinyin.vocab) — mainly Chinese.
 - Cloning engines: Breeze TTS 2 (default) and IndexTTS-2 (`--indextts`). F5-TTS,
-  Zonos, CosyVoice3 and IndexTTS-2.5 were tried and removed. For a fast
-  non-cloned voice use `/speak-fast` (Kokoro-82M).
+  Zonos, CosyVoice3 and IndexTTS-2.5 were tried and removed; Kokoro-82M (the old
+  fast canned voice) was dropped too. For near-instant speech use `/jarvis`.
 - Details + history in README.md / project memory.

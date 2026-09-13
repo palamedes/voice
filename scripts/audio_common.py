@@ -1,4 +1,4 @@
-"""Shared helpers for the narration scripts (index_speak.py, fast_speak.py)."""
+"""Shared helpers for the narration scripts (index_speak.py, jarvis_daemon.py, merge_audio.py)."""
 import json
 import re
 import subprocess
@@ -81,8 +81,10 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
     A mark at the end of a line stands in for that line's first break.
 
     [name] (a name in `voices`) switches to that voice until the next switch; a
-    chunk's voice is None before the first one. A switch ends the chunk but adds no
-    pause of its own. Brackets around anything else stay in the text, with a warning.
+    chunk's voice is None before the first one. A switch ends the chunk, and a change
+    of speaker gets a beat: the sentence pause, or with auto=False a breath that the
+    user's own marks replace. Brackets around anything else stay in the text, with a
+    warning.
     """
     plan = []            # entries: [chunk, pause_ms, explicit, voice]
     voice = None
@@ -121,10 +123,11 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
             add_text(para[pos:m.start()])
             pos = m.end()
             if name is not None:
-                # With --my-breaths only marks and line breaks pause, so the chunk a
-                # switch ends gets none of its own.
+                # A change of speaker gets a beat. The default mode already has its
+                # sentence pause there; with --my-breaths the switch counts as a breath,
+                # which the user's own ,,, / [pause N] (even [pause 0]) replaces.
                 if not auto and plan and plan[-1][0] and not plan[-1][2]:
-                    plan[-1][1] = 0
+                    plan[-1][1] = breath_ms if name != voice else 0
                 voice = name
                 continue
             if m.group(0) == "\n":
@@ -153,7 +156,9 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
 def strip_markdown(text: str) -> str:
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    # Links keep their text — but only when the target looks like a URL or path, so a
+    # voice switch followed by a sound, "[art-bell](sighs)", isn't mistaken for a link.
+    text = re.sub(r"\[([^\]]+)\]\((?=[^)\s]*[/.:#])[^)]*\)", r"\1", text)
     text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s{0,3}>\s?", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)

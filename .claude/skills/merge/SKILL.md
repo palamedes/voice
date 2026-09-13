@@ -6,7 +6,7 @@ description: Merge two audio clips (from this voice project) into one file, with
 # merge — join two audio clips with a natural pause at the seam
 
 Combines two audio files in `/home/jellis/Projects/voice` (e.g. two `/speak`
-or `/speak-fast` outputs) into one, using `scripts/merge_audio.py` (plain
+outputs, or an intro in one voice and a body in another) into one, using `scripts/merge_audio.py` (plain
 system `python3` — ffmpeg only, no venv needed).
 
 ## Why not just `ffmpeg concat`

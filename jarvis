@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# jarvis — near-instant speech via the warm voice daemon (Kokoro-82M).
+# jarvis — your cloned voice, always loaded: a Breeze TTS 2 server that speaks out loud.
 #
-#   ./jarvis "Good evening, sir."         # speaks almost immediately (warm)
-#   ./jarvis --voice=bm_george "Indeed."  # any canned voice
-#   ./jarvis --stop                       # interrupt whatever it's saying
-#   ./jarvis --status                     # is the daemon up?
-#   ./jarvis --quit                       # shut the daemon down
+#   ./jarvis                          # start the server (loads Breeze, ~25 s) and wait until ready
+#   ./jarvis "Good evening, sir."     # speak it (starts the server first if needed)
+#   ./jarvis --art-bell               # switch voice; it sticks for later lines
+#   ./jarvis --art-bell "Hello, caller."
+#   ./jarvis --stop                   # stop talking
+#   ./jarvis --status                 # is it up, and in which voice?
+#   ./jarvis --quit                   # shut it down (frees ~8 GB of GPU memory)
 #
-# First call auto-starts the daemon (one-time model load, ~10s); every call
-# after that starts speaking in well under a second. A new ./jarvis while it's
-# talking interrupts it — like talking over Jarvis.
+# The server stays up until --quit. A new line interrupts the current one.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PY="$HERE/kokoro/.venv/bin/python"
-exec "$PY" "$HERE/scripts/voice_daemon.py" "$@"
+exec "$HERE/breeze-tts/.venv/bin/python" "$HERE/scripts/jarvis_daemon.py" "$@"

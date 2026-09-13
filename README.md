@@ -4,31 +4,28 @@ Turn a blog post into audio of *you* reading it out loud. Give it text and a
 10–15 second clip of your voice; it gives you back a clean audio file in your
 voice. Runs entirely locally on an NVIDIA GPU — nothing is uploaded anywhere.
 
-Three engines:
+Two engines, both cloning your voice:
 
-- **Cloned voice** ([Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2)) —
-  sounds like you, and can laugh, sigh or clear its throat on cue. The default.
+- **[Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2)** — sounds
+  like you, and can laugh, sigh or clear its throat on cue. The default.
   Renders in well under real time after a ~9 s warm-up. Non-commercial license.
-- **Cloned voice, take two** ([IndexTTS-2](https://github.com/index-tts/index-tts)) —
-  also sounds like you, with its own delivery and emotion presets. Add
-  `--indextts` to `./speak` or `./say`.
-- **Fast voice** ([Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)) —
-  stock synthetic voices, near-real-time. Same commands with `-fast` on the end.
+- **[IndexTTS-2](https://github.com/index-tts/index-tts)** — also sounds like
+  you, with its own delivery and emotion presets. Add `--indextts` to `./speak`
+  or `./say`.
 
 Only clone your own voice, or someone who has explicitly said yes.
 
-## The four commands
+## The commands
 
 ```sh
 ./speak "Hello, this is me."          # cloned voice → saved to output/
 ./say "Hello, this is me."            # cloned voice → out loud, nothing saved
-./speak-fast "Hi, this is Adam."      # fast voice → saved to output/
-./say-fast "Hi, this is Adam."        # fast voice → out loud, near-instant
+./jarvis "Hello, this is me."         # cloned voice, always loaded → out loud in a second or two
 ```
 
-All four also exist as slash commands in a Claude Code session in this folder
-(`/speak`, `/say`, `/speak-fast`, `/say-fast`, plus `/merge`), and as fish
-functions so the bare names work without `./`.
+They also exist as slash commands in a Claude Code session in this folder
+(`/speak`, `/say`, `/jarvis`, plus `/merge`), and as fish functions so the
+bare names work without `./`.
 
 ## Cheat sheet: everything you can write in the text
 
@@ -116,26 +113,31 @@ Things to know:
 - Because anything in parentheses may be taken as a sound, keep ordinary asides
   out of parentheses when using Breeze. (IndexTTS just reads them as text.)
 
-## Jarvis mode
+## Jarvis: your cloned voice, always ready
 
-`./say-fast` (alias `./jarvis`) talks through a resident voice daemon instead
-of cold-starting the model every time. The first call boots the daemon
-(one-time model load, ~10 s); after that, speech starts in well under a second
-— it streams sentence-by-sentence, so the first sentence plays while the rest
-is still generating.
+`./speak` and `./say` load Breeze from scratch every time, so the first word
+takes ~25 s. `./jarvis` keeps Breeze loaded in a background server instead:
+start it once, and from then on each line starts playing a second or two after
+you send it, streaming sentence by sentence (the next one renders while the
+current one plays).
 
 ```sh
-./jarvis "Good evening, sir."          # speaks almost immediately (warm)
-./jarvis "Actually, cancel that."      # interrupts what it was saying
-./jarvis --stop                        # just shut it up
-./jarvis --status                      # is the daemon up?
-./jarvis --quit                        # stop the daemon, free the RAM
+./jarvis                               # start the server; returns once it's ready (~25 s)
+./jarvis "Good evening, sir."          # speak (starts the server first if needed)
+./jarvis --art-bell                    # switch voice; it sticks for later lines
+./jarvis --art-bell "Hello, caller."   # switch and speak
+./jarvis "Actually, cancel that."      # a new line interrupts the current one
+./jarvis --stop                        # just stop talking
+./jarvis --status                      # is it up, and in which voice?
+./jarvis --quit                        # shut it down and free the GPU memory
 ```
 
-The daemon (`scripts/voice_daemon.py`) listens on a Unix socket
-(`/tmp/voice_daemon.sock`, log at `/tmp/voice_daemon.log`) and holds
-Kokoro-82M warm. Saved-file output (`./speak-fast`) still uses the one-shot
-path, which keeps the two-pass loudness normalization.
+Everything you can write in the text works here too (`,,,`, `[pause 1]`,
+`(sighs)`, `[voice]` switches), plus `--my-breaths` and `--wait`. Voices are
+levelled so they all play at about the same volume. The server stays up until
+`--quit` and holds about 8 GB of GPU memory while it runs, so quit it before a
+big `./speak` render or anything else GPU-heavy. It listens on
+`/tmp/jarvis.sock` (log: `/tmp/jarvis.log`).
 
 ## Voices
 
@@ -172,10 +174,11 @@ And this line is still Art Bell.
 
 - Use the exact names from `./speak --list-voices`. Text before the first
   switch uses `--voice` (default `presenter`).
-- A switch ends the current chunk but adds no pause of its own: pauses still
-  come from sentences and paragraphs (default mode) or from your marks and line
-  breaks (`--my-breaths`). One speaker per line with `--my-breaths` reads like
-  a conversation.
+- Speakers can share a line: `[art-bell] Go ahead, caller. [jason-ellis-ambiki]
+  Hi Art.` works just as well as one speaker per line.
+- A change of speaker always gets a beat: the normal sentence pause in the
+  default mode, or a 0.4 s breath with `--my-breaths`. Your own `,,,` or
+  `[pause]` at that spot replaces it (`[pause 0]` for none).
 - Each voice is levelled to the same average loudness (within about 2 dB in
   testing). Individual lines still vary a little, the same as with one voice,
   and a `(whispers)` line stays quiet.
@@ -328,26 +331,25 @@ silence is removed; the voice itself isn't touched.
   --fp16                      faster generation in half precision (IndexTTS only)
 ```
 
-`./speak-fast` / `./say-fast` (`scripts/fast_speak.py`, Kokoro-82M): same
-`--file/--text/--out/--format/--play` flags, plus `--voice` (default
-`am_adam`, see `--list-voices`) and `--speed` (default 1.0).
-
-`./say-fast` / `./jarvis` (`scripts/voice_daemon.py`, warm daemon):
-`--voice/--speed/--file/--text` as above, plus `--stop` (interrupt),
-`--wait` (block until playback ends), `--status`, `--quit`, and `--serve`
-(run the daemon in the foreground).
+`./jarvis` (`scripts/jarvis_daemon.py`, warm Breeze server): the text as
+words, `--text` or `--file`; `--voice NAME` or any voice name as a bare flag
+(it sticks for later lines); `--my-breaths`, `--wait`, `--stop`, `--status`,
+`--quit`, `--list-voices`, and `--serve` (run the server in the foreground).
 
 `./merge` (`scripts/merge_audio.py`): `--gap-ms` sets the pause at the seam
 (default 450, a sentence-to-sentence pause; ~700+ for a paragraph break).
 
 ## Setup
 
-- NVIDIA GPU (developed on an RTX 5070 Ti, 16 GB). Checkpoints are ~5.5 GB.
-- `index-tts/.venv` — PyTorch 2.8 + CUDA 12.8 venv for the cloned voice
-  (managed by `uv`; system Python 3.14 is too new for PyTorch).
-- `breeze-tts/` — Breeze TTS 2, only needed for `--breeze`: its own venv
-  (PyTorch 2.9.1 + CUDA 12.8) and 7.7 GB of weights. The weights and anything
-  you generate with them are licensed for non-commercial use only.
+- NVIDIA GPU (developed on an RTX 5070 Ti, 16 GB). Model weights: ~7.7 GB
+  for Breeze plus ~5.5 GB for IndexTTS-2.
+- `index-tts/.venv` — PyTorch 2.8 + CUDA 12.8 venv for IndexTTS-2, and the
+  Python `./speak` and `./say` start from (they hand Breeze renders over to
+  Breeze's venv). Managed by `uv`; system Python 3.14 is too new for PyTorch.
+- `breeze-tts/` — Breeze TTS 2, the default engine and the one behind
+  `./jarvis`: its own venv (PyTorch 2.9.1 + CUDA 12.8) and 7.7 GB of weights.
+  The weights and anything you generate with them are licensed for
+  non-commercial use only.
 
   ```sh
   git clone https://github.com/breezeblue-ai/breeze-tts
@@ -357,17 +359,14 @@ silence is removed; the voice itself isn't touched.
   uv pip install --python breeze-tts/.venv/bin/python -r breeze-tts/requirements.txt
   breeze-tts/.venv/bin/hf download BreezeBlue/Breeze-TTS-2 --local-dir breeze-tts/breeze-tts-2
   ```
-- `kokoro/.venv` — separate venv for the fast engine (pip package only;
-  first run downloads ~330 MB of weights).
 - `ffmpeg` on PATH for playback, normalization, and merging.
 
 ## Layout
 
 ```
-speak, say, speak-fast, say-fast, jarvis, merge    bash wrappers (see above)
-scripts/index_speak.py    cloned-voice narration (IndexTTS-2, or Breeze TTS 2 with --breeze)
-scripts/fast_speak.py     fast canned-voice narration (Kokoro-82M)
-scripts/voice_daemon.py   warm Kokoro daemon behind say-fast/jarvis
+speak, say, jarvis, merge    bash wrappers (see above)
+scripts/index_speak.py    cloned-voice narration (Breeze TTS 2, or IndexTTS-2 with --indextts)
+scripts/jarvis_daemon.py  warm Breeze server behind jarvis
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)
@@ -377,15 +376,14 @@ output/                   generated audio
 .claude/skills/           the slash commands (this project only)
 index-tts/                IndexTTS-2 repo, its .venv, checkpoints/ (5.5 GB)
 breeze-tts/               Breeze TTS 2 repo, its .venv, breeze-tts-2/ weights (7.7 GB)
-kokoro/.venv              the Kokoro-82M venv
 ```
 
 ## Acknowledgements
 
 The cloning models are [IndexTTS-2](https://github.com/index-tts/index-tts) by
 the Index team at Bilibili and [Breeze TTS 2](https://github.com/breezeblue-ai/breeze-tts)
-by BreezeBlue; the fast engine is
-[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad. This repo
-is the plumbing around them. (F5-TTS and Zonos were evaluated and removed:
-F5 mispronounced words with no way to fix it, Zonos didn't sound like me.
-CosyVoice3 and IndexTTS-2.5 lost a side-by-side listening test.)
+by BreezeBlue. This repo is the plumbing around them. (F5-TTS and Zonos were
+evaluated and removed: F5 mispronounced words with no way to fix it, Zonos
+didn't sound like me. CosyVoice3 and IndexTTS-2.5 lost a side-by-side
+listening test. [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), a
+fast canned voice, was dropped once Jarvis made the cloned voice fast enough.)
