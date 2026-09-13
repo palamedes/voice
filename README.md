@@ -4,10 +4,13 @@ Turn a blog post into audio of *you* reading it out loud. Give it text and a
 10–15 second clip of your voice; it gives you back a clean audio file in your
 voice. Runs entirely locally on an NVIDIA GPU — nothing is uploaded anywhere.
 
-Two engines:
+Three engines:
 
 - **Cloned voice** ([IndexTTS-2](https://github.com/index-tts/index-tts)) —
-  sounds like you. Slow: roughly a minute of compute per paragraph.
+  sounds like you. Slow: roughly a minute of compute per paragraph. The default.
+- **Cloned voice, take two** ([Breeze TTS 2](https://huggingface.co/BreezeBlue/Breeze-TTS-2)) —
+  also sounds like you, with its own delivery. Add `--breeze` to `./speak` or
+  `./say`. About twice as slow as IndexTTS-2; non-commercial license.
 - **Fast voice** ([Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)) —
   stock synthetic voices, near-real-time. Same commands with `-fast` on the end.
 
@@ -25,6 +28,28 @@ Only clone your own voice, or someone who has explicitly said yes.
 All four also exist as slash commands in a Claude Code session in this folder
 (`/speak`, `/say`, `/speak-fast`, `/say-fast`, plus `/merge`), and as fish
 functions so the bare names work without `./`.
+
+## Two cloned engines
+
+`./speak` and `./say` use IndexTTS-2 unless you add `--breeze`:
+
+```sh
+./speak "Same words, IndexTTS-2."                  # default
+./speak --breeze "Same words, Breeze TTS 2."
+./say --breeze --my-breaths --file posts/my-post.md
+```
+
+Everything else — voices, `,,,` / `[pause]` marks, `--my-breaths`, `--rate`,
+`--dry-run`, formats — works the same on both. `--emotion`, `--fp16`,
+`--seg-tokens` and `--gap-ms` are IndexTTS-only. The long form is
+`--engine breeze` / `--engine indextts`.
+
+Breeze needs the exact words of the reference clip. The first time you use a
+voice with it, Whisper transcribes the clip and saves the words next to it
+(e.g. `voice_samples/processed/presenter.txt`); if Whisper got a word wrong,
+fix the file. Breeze also performs vocal events written in parentheses —
+`(sigh)`, `(laugh)`, `(cough)`, `(clears throat)` — so keep ordinary asides
+out of parentheses when using it.
 
 ## Jarvis mode
 
@@ -87,8 +112,9 @@ Any listed voice name works as a bare flag, or via `--voice`:
    ./speak --myvoice "Hello from the new voice."
    ```
 
-The clip is the *entire* training step — there is no fine-tuning and no
-transcript. If a voice sounds off, fix the clip: re-record, or slice a better
+The clip is the *entire* training step — there is no fine-tuning, and the only
+transcript is the one Breeze makes for itself. If a voice sounds off, fix the
+clip: re-record, or slice a better
 window from the source with different start/duration values. The model
 ignores everything past 15 seconds, so longer is never better.
 
@@ -177,11 +203,12 @@ silence is removed; the voice itself isn't touched.
 
 ## Options reference
 
-`./speak` / `./say` (wrappers around `scripts/index_speak.py`, the cloned voice):
+`./speak` / `./say` (wrappers around `scripts/index_speak.py`, the cloned voices):
 
 ```
   --file PATH / --text TEXT   what to read (markdown auto-stripped)
   --out PATH                  output path (default: output/index_out.wav)
+  --breeze / --engine NAME    indextts (IndexTTS-2, default) or breeze (Breeze TTS 2)
   --voice NAME                reference voice (default: presenter); any name
                               also works as a bare flag: --calm, --muted, ...
   --ref PATH                  explicit reference clip path (overrides --voice)
@@ -192,8 +219,8 @@ silence is removed; the voice itself isn't touched.
   --play                      play out loud after generating
   --normalize / --no-normalize  loudness normalization (default: on)
   --lufs N                    target loudness (default -16)
-  --emotion NAME              neutral (default), happy, sad, angry
-  --emo-alpha A               emotion intensity (default 0.8)
+  --emotion NAME              neutral (default), happy, sad, angry (IndexTTS only)
+  --emo-alpha A               emotion intensity (default 0.8; IndexTTS only)
   --rate R                    speaking rate, pitch kept (0.9 = 10% slower)
   --sentence-gap / --para-gap / --breath-gap MS
                               pause after a sentence (450), paragraph (900),
@@ -202,7 +229,7 @@ silence is removed; the voice itself isn't touched.
                               automatic sentence/paragraph pauses plus your
                               marks (default), or pause only at your marks
   --dry-run                   print the chunks and pauses, don't render
-  --fp16                      faster generation in half precision
+  --fp16                      faster generation in half precision (IndexTTS only)
 ```
 
 `./speak-fast` / `./say-fast` (`scripts/fast_speak.py`, Kokoro-82M): same
@@ -222,6 +249,18 @@ silence is removed; the voice itself isn't touched.
 - NVIDIA GPU (developed on an RTX 5070 Ti, 16 GB). Checkpoints are ~5.5 GB.
 - `index-tts/.venv` — PyTorch 2.8 + CUDA 12.8 venv for the cloned voice
   (managed by `uv`; system Python 3.14 is too new for PyTorch).
+- `breeze-tts/` — Breeze TTS 2, only needed for `--breeze`: its own venv
+  (PyTorch 2.9.1 + CUDA 12.8) and 7.7 GB of weights. The weights and anything
+  you generate with them are licensed for non-commercial use only.
+
+  ```sh
+  git clone https://github.com/breezeblue-ai/breeze-tts
+  uv venv --python 3.12 breeze-tts/.venv
+  uv pip install --python breeze-tts/.venv/bin/python torch==2.9.1 torchaudio==2.9.1 \
+      --index-url https://download.pytorch.org/whl/cu128
+  uv pip install --python breeze-tts/.venv/bin/python -r breeze-tts/requirements.txt
+  breeze-tts/.venv/bin/hf download BreezeBlue/Breeze-TTS-2 --local-dir breeze-tts/breeze-tts-2
+  ```
 - `kokoro/.venv` — separate venv for the fast engine (pip package only;
   first run downloads ~330 MB of weights).
 - `ffmpeg` on PATH for playback, normalization, and merging.
@@ -230,7 +269,7 @@ silence is removed; the voice itself isn't touched.
 
 ```
 speak, say, speak-fast, say-fast, jarvis, merge    bash wrappers (see above)
-scripts/index_speak.py    cloned-voice narration (IndexTTS-2)
+scripts/index_speak.py    cloned-voice narration (IndexTTS-2, or Breeze TTS 2 with --breeze)
 scripts/fast_speak.py     fast canned-voice narration (Kokoro-82M)
 scripts/voice_daemon.py   warm Kokoro daemon behind say-fast/jarvis
 scripts/merge_audio.py    join two clips with a natural pause
@@ -241,13 +280,16 @@ posts/                    blog posts to read (.md or .txt)
 output/                   generated audio
 .claude/skills/           the slash commands (this project only)
 index-tts/                IndexTTS-2 repo, its .venv, checkpoints/ (5.5 GB)
+breeze-tts/               Breeze TTS 2 repo, its .venv, breeze-tts-2/ weights (7.7 GB)
 kokoro/.venv              the Kokoro-82M venv
 ```
 
 ## Acknowledgements
 
-The cloning model is [IndexTTS-2](https://github.com/index-tts/index-tts) by
-the Index team at Bilibili; the fast engine is
+The cloning models are [IndexTTS-2](https://github.com/index-tts/index-tts) by
+the Index team at Bilibili and [Breeze TTS 2](https://github.com/breezeblue-ai/breeze-tts)
+by BreezeBlue; the fast engine is
 [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad. This repo
 is the plumbing around them. (F5-TTS and Zonos were evaluated and removed:
-F5 mispronounced words with no way to fix it, Zonos didn't sound like me.)
+F5 mispronounced words with no way to fix it, Zonos didn't sound like me.
+CosyVoice3 and IndexTTS-2.5 lost a side-by-side listening test.)

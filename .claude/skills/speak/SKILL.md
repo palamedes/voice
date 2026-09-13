@@ -13,6 +13,13 @@ well AND pronounces correctly (real g2p — fixed the "jarring" problem), and it
 is fed one sentence / marked phrase at a time with explicit pauses between. Default
 reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 
+**Second engine: Breeze TTS 2** — add `--breeze` (same script, same flags; it
+re-launches itself in `breeze-tts/.venv`). Use it when the user asks for Breeze.
+Roughly twice as slow. The first use of a voice transcribes its reference into
+`<voice>.txt` beside the clip (Whisper). `--emotion`/`--fp16`/`--seg-tokens`/
+`--gap-ms` are IndexTTS-only. Breeze performs `(sigh)`, `(laugh)`, `(cough)`,
+`(clears throat)` written in parentheses — don't add parentheses to the text.
+
 ## Inputs
 - **Text**: from the skill args, the pasted message, or a file the user names
   (e.g. `posts/foo.md`). If none present, ask: "What text should I read?"
@@ -58,6 +65,7 @@ reference is a single clean clip (`voice_samples/processed/presenter.wav`).
 ## Notes
 - Pronunciation is reliable; if a rare word is wrong, IndexTTS-2 supports
   pinyin-style annotation for fixes (see checkpoints/pinyin.vocab) — mainly Chinese.
-- F5-TTS and Zonos have been uninstalled; IndexTTS-2 is the only cloning
-  engine. For a fast non-cloned voice use `/speak-fast` (Kokoro-82M).
+- Cloning engines: IndexTTS-2 (default) and Breeze TTS 2 (`--breeze`). F5-TTS,
+  Zonos, CosyVoice3 and IndexTTS-2.5 were tried and removed. For a fast
+  non-cloned voice use `/speak-fast` (Kokoro-82M).
 - Details + history in README.md / project memory.

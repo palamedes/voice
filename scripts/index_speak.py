@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-index_speak.py — narrate text in Jason's cloned voice with IndexTTS-2.
+index_speak.py — narrate text in Jason's cloned voice.
 
-Why IndexTTS-2: strong zero-shot cloning + accurate English pronunciation,
-plus emotion control decoupled from the speaker.
+Two cloning engines behind the same pacing:
+  --engine indextts (default)  IndexTTS-2: strong zero-shot cloning, accurate English
+                               pronunciation, emotion control decoupled from the speaker.
+  --engine breeze / --breeze   Breeze TTS 2: runs in its own venv (breeze-tts/.venv), so
+                               this script re-launches itself there. It also needs the
+                               reference clip's exact words: they're transcribed once with
+                               Whisper into <voice>.txt beside the clip (edit that file if
+                               a word is wrong).
 
 Pacing: by default (--auto-breaths) text is fed one sentence at a time with real
 pauses between (longer at blank lines), and ,,, / [breath] / [pause N] marks add
@@ -20,6 +26,7 @@ Reference voice: a single clean clip works best (default: presenter).
 Emotion (optional): --emotion neutral|happy|sad|angry (subtle by default).
 """
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -39,6 +46,8 @@ AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4", ".mov")
 
 ROOT = Path(__file__).resolve().parent.parent
 CKPT = ROOT / "index-tts" / "checkpoints"
+BREEZE = ROOT / "breeze-tts"
+ENGINES = {"indextts": "IndexTTS-2", "breeze": "Breeze TTS 2"}
 
 # IndexTTS-2 emo_vector order: [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]
 EMOTIONS = {
@@ -63,12 +72,14 @@ def list_voices():
 
 
 def expand_voice_shorthand(argv):
-    """Allow any voice name as a bare flag: --calm, --presenter, --muted, ...
-    Rewrites them to --voice <name> before argparse sees them."""
+    """Allow engine and voice names as bare flags: --breeze, --indextts, --calm, --muted, ...
+    Rewrites them to --engine <name> / --voice <name> before argparse sees them."""
     voices = list_voices()
     out = []
     for a in argv:
-        if a.startswith("--") and a[2:] in voices:
+        if a.startswith("--") and a[2:] in ENGINES:
+            out += ["--engine", a[2:]]
+        elif a.startswith("--") and a[2:] in voices:
             out += ["--voice", a[2:]]
         else:
             out.append(a)
@@ -149,12 +160,100 @@ def stretch(audio, sr, rate):
     return np.frombuffer(out, dtype=np.int16)
 
 
+def ref_transcript(clip: Path, sidecar=None):
+    """The exact words spoken in the reference clip (Breeze TTS 2 needs them). Read from
+    the sidecar .txt if there is one; otherwise transcribed with the cached Whisper model
+    and saved to the sidecar, so each voice is only transcribed once."""
+    if sidecar and sidecar.exists():
+        return sidecar.read_text(encoding="utf-8").strip()
+    print("[index_speak] transcribing the reference clip for Breeze (once per voice)...")
+    import soundfile as sf
+    import torch
+    from transformers import WhisperForConditionalGeneration, WhisperProcessor
+    wav16 = Path(tempfile.mkdtemp(prefix="indexref_")) / "ref16k.wav"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(clip),
+                    "-ac", "1", "-ar", "16000", str(wav16)], check=True)
+    audio, _ = sf.read(wav16, dtype="float32")
+    name = "openai/whisper-large-v3-turbo"
+    proc = WhisperProcessor.from_pretrained(name)
+    model = WhisperForConditionalGeneration.from_pretrained(name, dtype=torch.float16).to("cuda")
+    feats = proc(audio, sampling_rate=16000, return_tensors="pt").input_features.to("cuda", torch.float16)
+    with torch.no_grad():
+        ids = model.generate(feats, language="en", task="transcribe")
+    text = proc.batch_decode(ids, skip_special_tokens=True)[0].strip()
+    del model
+    torch.cuda.empty_cache()
+    if sidecar:
+        sidecar.write_text(text + "\n", encoding="utf-8")
+        print(f"[index_speak] saved {sidecar.relative_to(ROOT)} (edit it if a word is wrong)")
+    return text
+
+
+def load_indextts(args, ref_path, gap_ms):
+    """IndexTTS-2 -> (render(text) -> int16 samples, sample rate)."""
+    from indextts.infer_v2 import IndexTTS2
+    tts = IndexTTS2(cfg_path=str(CKPT / "config.yaml"), model_dir=str(CKPT), use_fp16=args.fp16,
+                    use_cuda_kernel=False, use_deepspeed=False)
+    emo_vector = EMOTIONS[args.emotion]
+
+    def render(text):
+        _, audio = tts.infer(
+            spk_audio_prompt=str(ref_path),
+            text=text,
+            output_path=None,          # return (sr, int16 samples) instead of writing
+            emo_vector=emo_vector,
+            emo_alpha=(1.0 if emo_vector is None else args.emo_alpha),
+            use_random=False,
+            interval_silence=gap_ms,
+            max_text_tokens_per_segment=args.seg_tokens,
+            verbose=False,
+        )
+        return audio[:, 0]
+    return render, 22050
+
+
+def load_breeze(ref_path, ref_text):
+    """Breeze TTS 2 -> (render(text) -> int16 samples, sample rate). Needs breeze-tts/.venv."""
+    sys.path.insert(0, str(BREEZE))
+    from breeze_infer.runtime import (load_runtime, resolve_device, set_all_seeds,
+                                      update_generation_config_for_breeze)
+    from breeze_infer.templates import get_template, prepare_inputs, select_template_name
+    from models.fast_streaming import FastBreezeStreamingRuntime, FastStreamingConfig
+
+    tokenizer, model, audio_tokenizer = load_runtime(BREEZE / "breeze-tts-2", device=resolve_device(),
+                                                     attn_implementation="eager")
+    update_generation_config_for_breeze(model)
+    # Same settings as Breeze's own infer.py (eager path, no CUDA-graph warmup).
+    config = FastStreamingConfig(max_new_tokens=1500, max_seq_len=2048, fast_all=None,
+                                 fast_text_encoder=False, fast_backbone_prefill=False,
+                                 fast_backbone_decode=False, fast_depth_decoder=False,
+                                 fast_codec=False, repetition_penalty=1.1)
+    runtime = FastBreezeStreamingRuntime(model, audio_tokenizer, config, tokenizer=tokenizer)
+
+    def render(text):
+        request = {"id": "chunk", "text": text, "speaker": "S0",
+                   "ref_audio_path": str(ref_path), "ref_text": ref_text}
+        set_all_seeds(42)
+        inputs = prepare_inputs(tokenizer, audio_tokenizer, model, [request],
+                                get_template(select_template_name(request)),
+                                guidance_scale=1.0, guidance_scale_ref=None, guidance_scale_ins=None)
+        audio = np.concatenate([np.asarray(c.audio).reshape(-1)
+                                for c in runtime.iter_audio_chunks(inputs, request_id="chunk", seed=42)])
+        if audio.dtype.kind == "f":
+            audio = np.clip(audio, -1, 1) * 32767
+        return audio.astype(np.int16)
+    return render, runtime.sample_rate
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Narrate text in a cloned voice (IndexTTS-2).")
+    ap = argparse.ArgumentParser(description="Narrate text in a cloned voice (IndexTTS-2 or Breeze TTS 2).")
     src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--file", type=Path)
     src.add_argument("--text", type=str)
     ap.add_argument("--out", type=Path, default=Path("output/index_out.wav"))
+    ap.add_argument("--engine", choices=list(ENGINES), default="indextts",
+                    help="Cloning engine: indextts (IndexTTS-2, default) or breeze (Breeze TTS 2). "
+                         "Bare --breeze / --indextts work too.")
     ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Any voice name "
                     "also works as a bare flag, e.g. --calm. Default: presenter.")
     ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
@@ -163,8 +262,9 @@ def main() -> int:
     ap.add_argument("--ref-secs", type=float, default=None,
                     help=f"How many seconds of reference to use (max {MAX_REF_SECS:g}; model caps there).")
     ap.add_argument("--list-voices", action="store_true", help="List available reference voices and exit.")
-    ap.add_argument("--emotion", choices=list(EMOTIONS), default="neutral")
-    ap.add_argument("--emo-alpha", type=float, default=0.8, help="Emotion intensity if not neutral.")
+    ap.add_argument("--emotion", choices=list(EMOTIONS), default="neutral", help="(IndexTTS only)")
+    ap.add_argument("--emo-alpha", type=float, default=0.8,
+                    help="Emotion intensity if not neutral (IndexTTS only).")
     ap.add_argument("--sentence-gap", type=int, default=450, help="Silence after each sentence (ms).")
     ap.add_argument("--para-gap", type=int, default=900,
                     help="Silence after each paragraph, i.e. at a blank line (ms).")
@@ -181,11 +281,11 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="Print how the text will be chunked and paused, then exit (no model load).")
     ap.add_argument("--seg-tokens", type=int, default=120,
-                    help="Max text tokens per internal segment (lower=safer, more seams).")
+                    help="Max text tokens per internal segment (lower=safer, more seams; IndexTTS only).")
     ap.add_argument("--gap-ms", type=int, default=None,
                     help="Silence where IndexTTS itself splits an overlong chunk "
-                         "(default 200 ms; 0 with --my-breaths).")
-    ap.add_argument("--fp16", action="store_true", help="Use fp16 (faster).")
+                         "(default 200 ms; 0 with --my-breaths; IndexTTS only).")
+    ap.add_argument("--fp16", action="store_true", help="Use fp16 (faster; IndexTTS only).")
     ap.add_argument("--format", choices=["wav", "ogg", "both"], default="wav",
                     help="Output format. 'ogg' = compressed Opus (~15-20x smaller).")
     ap.add_argument("--bitrate", default="48k", help="Opus bitrate for ogg (e.g. 32k, 48k, 64k).")
@@ -207,6 +307,16 @@ def main() -> int:
         print("ERROR: provide --text or --file (or --list-voices).", file=sys.stderr)
         return 1
 
+    breeze_py = BREEZE / ".venv" / "bin" / "python"
+    if (args.engine == "breeze" and not args.dry_run
+            and Path(sys.prefix).resolve() != breeze_py.parent.parent.resolve()):
+        # Breeze needs its own environment (newer torch/transformers): re-launch there.
+        if not breeze_py.exists():
+            print(f"ERROR: Breeze TTS 2 isn't installed ({breeze_py} missing); see README Setup.",
+                  file=sys.stderr)
+            return 1
+        os.execv(breeze_py, [str(breeze_py), str(Path(__file__).resolve()), *sys.argv[1:]])
+
     base_ref = resolve_ref(args.ref, args.voice)
     if base_ref is None:
         which = args.ref or args.voice or "presenter"
@@ -219,13 +329,16 @@ def main() -> int:
         print(f"[index_speak] note: --ref-secs {args.ref_secs:g} exceeds the {MAX_REF_SECS:g}s "
               f"model cap; using {MAX_REF_SECS:g}s.")
         args.ref_secs = MAX_REF_SECS
-    if args.ref_start > 0 or args.ref_secs:
-        ref_path = trim_ref(base_ref, args.ref_start, args.ref_secs)
-        win = f"{args.ref_start:g}s..{args.ref_start + (args.ref_secs or MAX_REF_SECS):g}s"
-        print(f"[index_speak] reference: {base_ref.name} [{win}]")
+    custom_window = args.ref_start > 0 or bool(args.ref_secs)
+    if custom_window or args.engine == "breeze":
+        # Breeze has no built-in 15 s cap, so it always gets an explicit window.
+        ref_path = trim_ref(base_ref, args.ref_start, args.ref_secs or MAX_REF_SECS)
     else:
         ref_path = base_ref
-        print(f"[index_speak] reference: {base_ref.name} (first {MAX_REF_SECS:g}s)")
+    win = f"{args.ref_start:g}s..{args.ref_start + (args.ref_secs or MAX_REF_SECS):g}s"
+    print(f"[index_speak] {ENGINES[args.engine]}, reference: {base_ref.name} [{win}]")
+    # The default window's transcript is cached beside the clip; custom windows aren't.
+    sidecar = None if custom_window else base_ref.with_suffix(".txt")
 
     raw = args.text if args.text is not None else args.file.read_text(encoding="utf-8")
     text = raw if args.no_markdown else strip_markdown(raw)
@@ -245,39 +358,23 @@ def main() -> int:
             print(f"  {chunk or '(silence)'}\n      ~ {pause_ms} ms")
         return 0
 
-    print(f"[index_speak] {len(text)} chars, {len(plan)} chunks. Loading IndexTTS-2...")
-    from indextts.infer_v2 import IndexTTS2
-
-    tts = IndexTTS2(
-        cfg_path=str(CKPT / "config.yaml"),
-        model_dir=str(CKPT),
-        use_fp16=args.fp16,
-        use_cuda_kernel=False,
-        use_deepspeed=False,
-    )
+    print(f"[index_speak] {len(text)} chars, {len(plan)} chunks. Loading {ENGINES[args.engine]}...")
+    if args.engine == "breeze":
+        if args.emotion != "neutral":
+            print("[index_speak] note: --emotion only works with IndexTTS; ignored.")
+        render, sr = load_breeze(ref_path, ref_transcript(ref_path, sidecar))
+    else:
+        render, sr = load_indextts(args, ref_path, gap_ms)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    # IndexTTS always writes a wav; we transcode to ogg afterward if requested.
+    # We always write a wav; it's transcoded to ogg afterward if requested.
     wav_path = args.out.with_suffix(".wav")
-    emo_vector = EMOTIONS[args.emotion]
 
-    sr = 22050  # IndexTTS-2 output rate
     pieces = []
     for i, (chunk, pause_ms) in enumerate(plan, 1):
         if chunk:
             print(f"[index_speak] chunk {i}/{len(plan)}: {chunk[:70]}")
-            sr, audio = tts.infer(
-                spk_audio_prompt=str(ref_path),
-                text=chunk,
-                output_path=None,          # return (sr, int16 samples) instead of writing
-                emo_vector=emo_vector,
-                emo_alpha=(1.0 if emo_vector is None else args.emo_alpha),
-                use_random=False,
-                interval_silence=gap_ms,
-                max_text_tokens_per_segment=args.seg_tokens,
-                verbose=False,
-            )
-            speech = trim_edges(audio[:, 0], sr)
+            speech = trim_edges(render(chunk), sr)
             if not args.auto_breaths:
                 speech = tighten_pauses(speech, sr)
             if args.rate != 1.0:

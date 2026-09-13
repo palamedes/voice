@@ -1,5 +1,6 @@
 # Third-party TTS engine + multi-GB model weights — re-install via README
 /index-tts/
+/breeze-tts/
 
 # Generated audio (regenerable; keep the folder, ignore its contents)
 /output/*
