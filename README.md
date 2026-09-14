@@ -214,8 +214,9 @@ that side):
 article and it splits into paragraphs at the blank lines (if the text has no
 blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
 links and emphasis are read as plain text; `---` rules, front matter and code
-blocks are skipped. Pick who reads it, from **Read by** or with **read** in the
-voices list, and press **▶ Read**: Jarvis reads one paragraph at a time,
+blocks are skipped. Pick who reads it by clicking a voice in the voices list (a ✓
+marks the reader; **Read by** does the same), and press **▶ Read**: Jarvis
+reads one paragraph at a time,
 highlighting the one it's on and following it down the page.
 
 Paragraphs go to Jarvis one at a time, so you can work on the ones further down
@@ -233,9 +234,13 @@ While it's reading, either one goes next instead of cutting anything off.
   picks up where you left off (the ▸ mark); ⟲ top starts over.
 - A blank line typed inside a paragraph splits it in two; emptying one removes
   it. **Edit as text** shows the whole article in one box for big changes.
-- A `[voice]` switch carries on into the following paragraphs until the next
-  switch, as it does in `./speak`; a paragraph that starts in someone else's
-  voice is tagged with their name in green.
+- **One paragraph in another voice:** hover it and click the name under ¶N on
+  the left, then pick a voice ("Article reader" undoes it). It applies to that
+  paragraph only, and the name stays showing in green. Copy text and Render out
+  carry it as a `[voice]` switch, so `./speak` reads it the same way. A
+  `[voice]` switch typed into the text carries on into the following paragraphs
+  until the next switch, as it does in `./speak`. (Edit as text shows only the
+  words: a paragraph you change there goes back to the article's reader.)
 - **Only my breaths** is `--my-breaths`.
 - **Copy text** copies the article, marks and all, to paste back into the post;
   **⬇ Render out** downloads the whole article as a `.wav`, read the same way.

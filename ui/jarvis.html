@@ -6,6 +6,7 @@
 <title>Jarvis</title>
 <style>
   :root {
+    color-scheme: dark;   /* dark scrollbars and menus */
     --bg: #0f1115; --panel: #171a21; --card: #12151b; --line: #262b36; --field: #0c0e12;
     --text: #e8e9ed; --muted: #8b91a1; --accent: #7c9cff;
     --left: #2a2f3a; --right: #2f6df6; --guest: #1f9d55; --ok: #3ecf8e; --warn: #f5b44a; --err: #ff6b6b;
@@ -50,6 +51,11 @@
   #voices li { display: flex; justify-content: space-between; align-items: center; gap: .4rem;
                padding: .3rem .2rem; border-bottom: 1px solid var(--line); }
   .vname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vpick { flex: 1; display: flex; align-items: center; gap: .4rem; min-width: 0; text-align: left;
+           background: transparent; border: 1px solid transparent; padding: .25rem .4rem; }
+  .vpick:hover:not(:disabled) { background: var(--card); border-color: var(--line); }
+  .vpick[aria-checked="true"] { background: #1b2540; border-color: var(--accent); }
+  .vcheck { width: 1rem; flex: none; color: var(--accent); font-weight: 700; }
 
   /* panel */
   #panel { overflow: auto; display: grid; gap: .6rem; align-content: start; flex: 1; }
@@ -116,19 +122,27 @@
   #raw { flex: 1; margin: .6rem 0; resize: none; line-height: 1.55; }
   #paras { flex: 1; overflow: auto; margin: .6rem 0; padding: .3rem 0;
            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .para { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: .4rem;
+  .para { display: grid; grid-template-columns: 6.2rem minmax(0, 1fr); gap: .4rem;
           padding: .4rem .5rem .4rem 0; border-left: 3px solid transparent; border-radius: 6px;
           transition: background .2s; }
   .gutter { display: flex; flex-direction: column; align-items: flex-end; gap: .15rem;
             font-size: .72rem; color: var(--muted); user-select: none; padding-top: .3rem; }
+  .gtop { display: flex; align-items: center; gap: .15rem; }
   .ptools { display: flex; opacity: 0; }
   .ptools button { background: transparent; border: none; color: var(--muted);
                    padding: 0 .2rem; font-size: .85rem; }
   .ptools button:hover { color: var(--text); }
   .para:hover .ptools, .para:focus-within .ptools { opacity: 1; }
   .pbody { min-width: 0; }
-  .pbody .tag { display: block; font-size: .72rem; color: var(--guest); margin: 0 .4rem .1rem; }
-  .pbody .tag:empty { display: none; }
+  .pvoice { position: relative; display: block; max-width: 100%; padding: 0 .3rem; opacity: 0;
+            border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+  .pvoice-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pvoice select { position: absolute; inset: 0; width: 100%; padding: 0; border: none; opacity: 0;
+                   cursor: pointer; }
+  .para:hover .pvoice, .para:focus-within .pvoice, .pvoice.other, .pvoice.own { opacity: 1; }
+  .pvoice.other { color: var(--guest); }
+  .pvoice.own { color: var(--guest); border-color: var(--guest); }
+  .pvoice:hover, .pvoice:focus-within { border-color: var(--accent); }
   .para .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1.02rem; line-height: 1.6;
                 padding: .15rem .4rem; border-radius: 6px; outline: none; cursor: text; }
   .para .text:focus { background: var(--field); box-shadow: 0 0 0 1px var(--line); }
@@ -235,7 +249,8 @@
     <div id="paras" aria-label="Article paragraphs"></div>
     <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
       ▶ read on from here · ⟳ play just this one (Ctrl+Enter); while it's reading, either one goes next.
-      A blank line splits a paragraph; a [voice] switch carries on until the next one.</div>
+      A blank line splits a paragraph. The name under ¶ picks who reads that one paragraph;
+      a [voice] switch typed in the text carries on until the next one.</div>
   </section>
 </main>
 
@@ -389,19 +404,35 @@ function renderVoices() {
   const query = $("#search").value.trim().toLowerCase();
   const shown = voices.filter((v) => v.toLowerCase().includes(query));
   const list = $("#voices");
-  // In the Article view a click picks who reads; otherwise it adds to the panel.
+  // In the Article view each voice is a choice of who reads the article (✓ marks the
+  // reader); otherwise its button adds it to the panel.
   const reading = state.mode === "article";
+  list.setAttribute("role", reading ? "radiogroup" : "list");
+  list.setAttribute("aria-label", reading ? "Who reads the article" : "Voices");
   list.replaceChildren(...shown.map((voice) => {
-    const [text, title] = reading
-      ? voice === state.article.voice ? ["✓ reader", "Reading the article"] : ["read", "Have this voice read the article"]
-      : state.panel.some((m) => m.voice === voice) ? ["✓", "Already on the panel"] : ["+ panel", "Add to the panel"];
+    if (reading) {
+      const on = voice === state.article.voice;
+      return el("li", { role: "none" }, el("button", {
+        type: "button", class: "vpick", role: "radio", "aria-checked": String(on),
+        title: on ? "Reading the article" : "Have this voice read the article", onclick: () => setReader(voice),
+      }, [el("span", { class: "vcheck", "aria-hidden": "true" }, on ? "✓" : ""),
+          el("span", { class: "vname" }, voice)]));
+    }
+    const added = state.panel.some((m) => m.voice === voice);
     return el("li", {}, [
       el("span", { class: "vname", title: voice }, voice),
-      el("button", { type: "button", class: "small", title,
-                     onclick: () => (reading ? setReader(voice) : addToPanel(voice)) }, text),
+      el("button", { type: "button", class: "small", title: added ? "Already on the panel" : "Add to the panel",
+                     onclick: () => addToPanel(voice) }, added ? "✓" : "+ panel"),
     ]);
   }));
   if (!shown.length) list.append(el("li", { class: "empty" }, voices.length ? "No match" : "No voices found"));
+  // Keep the reader's ✓ in sight (scrolling only the list, not the page).
+  const chosen = reading && list.querySelector('[aria-checked="true"]');
+  if (chosen) {
+    const box = list.getBoundingClientRect();
+    const row = chosen.getBoundingClientRect();
+    if (row.top < box.top || row.bottom > box.bottom) list.scrollTop += row.top - box.top - (box.height - row.height) / 2;
+  }
 }
 $("#search").addEventListener("input", renderVoices);
 $("#reload").addEventListener("click", loadVoices);
@@ -934,18 +965,24 @@ function paraNode(para) {
   const tool = (label, title, action) =>
     el("button", { type: "button", title, "aria-label": title, onclick: action }, label);
   const num = el("span", { class: "num" });
-  const tag = el("span", { class: "tag" });
+  const name = el("span", { class: "pvoice-name" });
+  const pick = el("select", { "aria-label": "Who reads this paragraph" });
+  pick.addEventListener("change", () => setParaVoice(id, pick.value));
+  const chip = el("label", { class: "pvoice" }, [name, pick]);
   const row = el("div", { class: "para" }, [
     el("div", { class: "gutter" }, [
-      num,
-      el("div", { class: "ptools" }, [
-        tool("▶", "Read on from here", () => read(id)),
-        tool("⟳", "Play just this paragraph (Ctrl+Enter)", () => read(id, true)),
+      el("div", { class: "gtop" }, [
+        el("div", { class: "ptools" }, [
+          tool("▶", "Read on from here", () => read(id)),
+          tool("⟳", "Play just this paragraph (Ctrl+Enter)", () => read(id, true)),
+        ]),
+        num,
       ]),
+      chip,
     ]),
-    el("div", { class: "pbody" }, [tag, text]),
+    el("div", { class: "pbody" }, [text]),
   ]);
-  paraNodes.set(id, { row, text, num, tag });
+  paraNodes.set(id, { row, text, num, chip, name, pick });
   return row;
 }
 
@@ -960,7 +997,8 @@ function commitParagraph(id) {
     article.paras.splice(index, 1);
   } else {
     article.paras[index].text = parts[0];
-    article.paras.splice(index + 1, 0, ...parts.slice(1).map((part) => newPara(part)));
+    const own = article.paras[index].voice ? { voice: article.paras[index].voice } : {};   // split: same reader
+    article.paras.splice(index + 1, 0, ...parts.slice(1).map((part) => ({ ...newPara(part), ...own })));
   }
   if (!article.paras.length) rawMode = true;
   save();
@@ -985,13 +1023,13 @@ function renderArticle() {
 // Highlights and labels only; cheap enough to run on every step of the reader.
 function paintArticle() {
   const known = new Set(voices);
-  let voice = article.voice;
+  let carried = article.voice;          // the reader, or the last [voice] switch typed so far
   article.paras.forEach((para, i) => {
     const node = paraNodes.get(para.id);
     if (!node) return;
     node.num.textContent = "¶" + (i + 1);
-    node.tag.textContent = voice && voice !== article.voice ? labelFor(voice) : "";
-    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
+    paintParaVoice(node, para, para.voice || carried);
+    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) carried = mark[1];
     node.row.classList.toggle("current", para.id === reader.currentId);
     node.row.classList.toggle("read", reader.read.has(para.id));
     node.row.classList.toggle("next", Boolean(reader.next && reader.next.id === para.id));
@@ -1010,15 +1048,66 @@ function paintArticle() {
   $("#read-top").hidden = reader.active || start <= 0;
 }
 
-// Who's reading at the start of paragraph `index`: the reader, or the last [voice]
-// switch before it (a switch carries on, as it does in ./speak and Render out).
+// The name under ¶N: who reads this paragraph, and a menu to change it for this one only.
+function paintParaVoice(node, para, start) {
+  const { chip, name, pick } = node;
+  const label = labelFor(start);
+  name.textContent = label;
+  chip.classList.toggle("own", Boolean(para.voice));
+  chip.classList.toggle("other", start !== article.voice);
+  chip.title = para.voice ? `Read by ${label} (this paragraph only)`
+    : start !== article.voice ? `Read by ${label} (a [voice] switch earlier in the text)`
+    : `Read by the article's reader, ${label}`;
+  if (document.activeElement === pick) return;     // don't rebuild a menu while it's open
+  const key = JSON.stringify([voices, article.voice, para.voice || "", state.panel]);
+  if (pick.dataset.key !== key) {
+    const choices = [...new Set([...voices, ...(para.voice ? [para.voice] : [])])];
+    pick.replaceChildren(el("option", { value: "" }, `Article reader (${labelFor(article.voice)})`),
+                         ...choices.map((voice) => el("option", { value: voice }, labelFor(voice))));
+    pick.dataset.key = key;
+  }
+  pick.value = para.voice || "";
+}
+
+function setParaVoice(id, voice) {
+  const para = article.paras[paraIndex(id)];
+  if (!para) return;
+  if (voice) para.voice = voice;
+  else delete para.voice;
+  save();
+  paintArticle();
+  if (reader.active && (id === reader.currentId || id === reader.sentId)) {
+    toast("Jarvis already has this paragraph: press ⟳ afterwards to hear the new voice");
+  }
+}
+
+// Who reads paragraph `index` from its start: its own reader if you picked one, else the
+// article's reader or the last [voice] switch typed before it (a typed switch carries on,
+// as in ./speak; a paragraph's own reader doesn't).
 function voiceAt(index) {
   const known = new Set(voices);
   let voice = article.voice;
   for (const para of article.paras.slice(0, index)) {
     for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
   }
-  return voice;
+  return article.paras[index].voice || voice;
+}
+
+// The article as one text, with a [voice] switch wherever a paragraph starts in a voice
+// other than the one reading just before it: what Render out and Copy text use, so the
+// paragraphs' own readers survive the trip into ./speak. (A switch goes after a Markdown
+// heading, quote or list marker, so the marker is still stripped.)
+function articleScript() {
+  const known = new Set(voices);
+  let running = article.voice;
+  return article.paras.map((para, i) => {
+    const start = voiceAt(i);
+    const text = start === running ? para.text
+      : para.text.replace(/^(\s{0,3}(?:#{1,6}|>|[-*+])\s+)?/, (marker) => `${marker}[${start}] `);
+    running = start;
+    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) running = mark[1];
+    return text;
+  }).join("\n\n");
 }
 
 function follow(id) {
@@ -1200,7 +1289,7 @@ $("#article-clear").addEventListener("click", () => {
 });
 
 $("#article-copy").addEventListener("click", async () => {
-  const text = rawMode ? $("#raw").value : article.paras.map((p) => p.text).join("\n\n");
+  const text = rawMode ? $("#raw").value : articleScript();
   if (!text.trim()) return toast("Nothing to copy yet");
   try {
     await navigator.clipboard.writeText(text);
@@ -1216,7 +1305,7 @@ $("#article-render").addEventListener("click", () => {
   if (!article.voice) return toast("Pick who reads it first");
   if (!ready) return toast("Start Jarvis first (top left)");
   const title = article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60);
-  renderWav($("#article-render"), { text: article.paras.map((p) => p.text).join("\n\n"),
+  renderWav($("#article-render"), { text: articleScript(),
                                     voice: article.voice, markdown: true, my_breaths: article.myBreaths,
                                     name: title || "article" });
 });
