@@ -21,7 +21,7 @@ Only clone your own voice, or someone who has explicitly said yes.
 ./speak "Hello, this is me."          # cloned voice → saved to output/
 ./say "Hello, this is me."            # cloned voice → out loud, nothing saved
 ./jarvis "Hello, this is me."         # cloned voice, always loaded → out loud in a second or two
-./jarvis-ui                           # a local web page for Jarvis: voices, a panel, conversations
+./jarvis-ui                           # a local web page for Jarvis: voices, a panel, conversations, articles
 ```
 
 They also exist as slash commands in a Claude Code session in this folder
@@ -40,7 +40,7 @@ bare names work without `./`.
 | `[art-bell]`, `[jason-ellis-presenter]`, … | reads what follows in that voice, until the next switch — [details](#switch-voices-mid-text-conversations) | both |
 | `(sighs)`, `(laughs)`, `(clears throat)`, … | performs the sound — [full list below](#breeze-sounds-the-full-list) | Breeze |
 | `(whispers)`, `(shouts)` | says what follows quietly / loudly | Breeze |
-| Markdown (`#` headings, `**bold**`, links, code blocks) | stripped before reading | both |
+| Markdown (`#` headings, `**bold**`, links, code blocks, `---` rules, front matter) | stripped before reading | both |
 
 A mark replaces the automatic pause at that spot, and back-to-back marks add
 up. Everything else — voice, engine, speed, pause lengths, output format — is a
@@ -143,12 +143,17 @@ big `./speak` render or anything else GPU-heavy. It listens on
 
 ### The Jarvis page: a panel of voices and conversations
 
-`./jarvis-ui` opens a small local web page for Jarvis
-(`http://127.0.0.1:8765`), handy for giving each character in a story or a
-D&D session its own voice:
+`./jarvis-ui` starts Jarvis (unless it's already running) and opens a small
+local web page for it (`http://127.0.0.1:8765`), handy for giving each
+character in a story or a D&D session its own voice:
 
 - **Header:** Jarvis's status, plus Start, Stop talking and Shut down. Esc
-  also stops talking.
+  also stops talking. **Shut down** stops everything: Jarvis lets go of the
+  GPU and the page's server exits, handing your terminal back; run
+  `./jarvis-ui` to start again. (Start is there in case Jarvis failed or was
+  quit from the command line.) The two buttons on the right switch between the
+  **Panel + Conversation** view (described here) and the **Article** view
+  (below).
 - **Voices:** every voice in `voice_samples/`. Click one to add it to the
   panel; drop new clips into `voice_samples/` and press Reload.
 - **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
@@ -201,8 +206,45 @@ that side):
 }
 ```
 
+#### The Article view: tune how an article reads, live
+
+**Article** (top right) swaps the panel and conversation for an editor. Paste an
+article and it splits into paragraphs at the blank lines (if the text has no
+blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
+links and emphasis are read as plain text; `---` rules, front matter and code
+blocks are skipped. Pick who reads it, from **Read by** or with **read** in the
+voices list, and press **▶ Read**: Jarvis reads one paragraph at a time,
+highlighting the one it's on and following it down the page.
+
+Paragraphs go to Jarvis one at a time, so you can work on the ones further down
+while it reads (add a `,,,`, a `[pause 1]`, a `(sighs)`, reword a sentence) and
+it reads your new version when it gets there. To keep the reading flowing, the
+next paragraph is sent a few seconds before the current one ends (it's marked
+**up next**), so it follows after a normal paragraph pause, the same pause as
+`./speak` and Render out. From then on, an edit to that paragraph waits for
+⟳. To hear a change right away, hover the paragraph and press ⟳ (or
+Ctrl+Enter while typing in it) to play just that one; ▶ reads on from there.
+While it's reading, either one goes next instead of cutting anything off.
+
+- **⏸ Pause after ¶N** stops after paragraph N (the one up next, if it's
+  already been sent); **■ Stop** (or Esc) stops right away. **▶ Read from ¶N**
+  picks up where you left off (the ▸ mark); ⟲ top starts over.
+- A blank line typed inside a paragraph splits it in two; emptying one removes
+  it. **Edit as text** shows the whole article in one box for big changes.
+- A `[voice]` switch carries on into the following paragraphs until the next
+  switch, as it does in `./speak`; a paragraph that starts in someone else's
+  voice is tagged with their name in green.
+- **Only my breaths** is `--my-breaths`.
+- **Copy text** copies the article, marks and all, to paste back into the post;
+  **⬇ Render out** downloads the whole article as a `.wav`, read the same way.
+- The article is kept in this browser (not in a file) until you press Clear.
+
 The page only listens on 127.0.0.1 and only takes requests from itself.
-Ctrl+C stops the page; Jarvis keeps running until you shut it down.
+Ctrl+C in the terminal works like Shut down: it stops the page and Jarvis
+(closing the terminal does too). `./jarvis-ui --keep-jarvis` leaves Jarvis
+running when the page stops, for `./jarvis` from the command line;
+`--no-start` opens the page without starting Jarvis; `--port` and `--no-open`
+do what they say.
 
 ## Voices
 

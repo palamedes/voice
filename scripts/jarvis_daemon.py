@@ -17,6 +17,7 @@ threads only queue requests. A new line interrupts whatever is playing, unless i
 sent with queue (./jarvis --queue, and always from the page): then it waits its turn.
 """
 import argparse
+import itertools
 import json
 import os
 import queue
@@ -79,11 +80,17 @@ class Job:
     """One unit of GPU work; `done` is set once it's finished (for a line: once
     playback has ended), `cancel` stops a line between sentences."""
 
+    ids = itertools.count(1)
+
     def __init__(self, run, *args):
         self.run, self.args = run, args
+        self.id = next(Job.ids)
         self.done = threading.Event()
         self.cancel = threading.Event()
         self.result = self.error = None
+        self.rendered = threading.Event()   # a line: all its audio is with the player,
+        self.ends_at = 0.0                   # ...which finishes playing it then (monotonic)
+        self.first_audio = None              # seconds until its first sentence was ready
 
 
 # ---------------------------------------------------------------------- server
@@ -94,6 +101,8 @@ class Jarvis:
         self.ready = threading.Event()
         self.error: str | None = None
         self.current: Job | None = None
+        self.playing: set[Job] = set()   # lines fully rendered, still coming out of the speakers
+        self.lines: dict[int, Job] = {}  # recent lines by id, for "wait"
         self.player: subprocess.Popen | None = None   # one long-lived ffplay; audio queues into it
         self.play_until = 0.0       # monotonic time when the audio written so far finishes
         self.refs = {}              # voice -> (reference clip, its transcript)
@@ -184,15 +193,16 @@ class Jarvis:
         self.player.stdin.write(pcm)
         self.player.stdin.flush()
 
-    def speak(self, job: Job, text: str, auto: bool):
+    def speak(self, job: Job, text: str, auto: bool, gap_ms: int = LINE_GAP_MS):
         from audio_common import pacing_plan
         from index_speak import list_voices, tighten_pauses, trim_edges
         plan = pacing_plan(text, auto=auto, voices=set(list_voices()))
-        t0, first = time.time(), True
+        t0 = time.time()
         try:
             if self.play_until > time.monotonic():
-                # A queued line while another is still playing: leave a beat between them.
-                self.play(bytes(2 * (self.sr * LINE_GAP_MS // 1000)))
+                # A queued line while another is still playing: leave a beat between them
+                # (the page asks for a paragraph-sized one when reading an article).
+                self.play(bytes(2 * (self.sr * gap_ms // 1000)))
             for chunk, pause_ms, voice in plan:
                 if job.cancel.is_set():
                     break
@@ -203,24 +213,35 @@ class Jarvis:
                     if not auto:
                         speech = tighten_pauses(speech, self.sr)
                     pcm = self.level(voice, speech).tobytes()
-                    if first:
-                        print(f"[jarvis] first audio in {time.time() - t0:.2f}s", flush=True)
-                        first = False
+                    if job.first_audio is None:
+                        job.first_audio = round(time.time() - t0, 2)
+                        print(f"[jarvis] first audio in {job.first_audio:.2f}s", flush=True)
                 if job.cancel.is_set():
                     break
                 self.play(pcm + bytes(2 * (self.sr * pause_ms // 1000)))
         except (BrokenPipeError, OSError):
             pass
         # The GPU thread moves on (and can render the next line while this one plays);
-        # the job counts as done once its audio has played out.
-        threading.Timer(max(0.0, self.play_until - time.monotonic()), job.done.set).start()
+        # the job counts as done once its audio has played out (or Stop cuts it off).
+        job.ends_at = self.play_until
+        job.rendered.set()
+        self.playing.add(job)
+
+        def played():
+            self.playing.discard(job)
+            job.done.set()
+        threading.Timer(max(0.0, self.play_until - time.monotonic()), played).start()
 
     # -- requests ---------------------------------------------------------------
     def interrupt(self):
         """Stop talking: cancel the current line, drop queued ones, discard buffered audio."""
-        for job in [self.current, *list(self.jobs.queue)]:
+        playing = list(self.playing)
+        for job in [self.current, *list(self.jobs.queue), *playing]:
             if job and job.run == Jarvis.speak:
                 job.cancel.set()
+        for job in playing:          # their audio is gone: whoever waits on them can go on
+            self.playing.discard(job)
+            job.done.set()
         player, self.player = self.player, None
         if player and player.poll() is None:
             try:
@@ -266,11 +287,38 @@ class Jarvis:
                 return
             if not req.get("queue"):
                 self.interrupt()
-            job = Job(Jarvis.speak, text, not req.get("my_breaths"))
+            gap = req.get("gap_ms")
+            gap = max(0, min(gap, 5000)) if isinstance(gap, int) else LINE_GAP_MS
+            job = Job(Jarvis.speak, text, not req.get("my_breaths"), gap)
+            self.lines[job.id] = job
+            for old in list(self.lines)[:-100]:
+                del self.lines[old]
             self.jobs.put(job)
             if req.get("wait"):
                 job.done.wait()
-            send_json(conn, {"ok": True, "voice": self.voice})
+            send_json(conn, {"ok": True, "voice": self.voice, "id": job.id})
+        elif cmd == "wait":
+            # Has line `id` finished playing? Waits up to `timeout` s for it, so callers
+            # can follow along (the page reads an article paragraph by paragraph).
+            job = self.lines.get(req.get("id"))
+            if job is None:
+                send_json(conn, {"ok": False, "error": "no such line"})
+                return
+            # With `lead`, it also returns once the line is fully rendered and ends within
+            # `lead` seconds: time to send the next line so it follows without a gap.
+            lead = req.get("lead")
+            deadline = time.monotonic() + min(max(float(req.get("timeout") or 20), 0.05), 60)
+            while not job.done.is_set():
+                left = deadline - time.monotonic()
+                closing = (isinstance(lead, (int, float)) and job.rendered.is_set()
+                           and job.ends_at - time.monotonic() <= lead)
+                if closing or left <= 0:
+                    break
+                job.done.wait(min(left, 0.05))
+            ends_in = max(0.0, job.ends_at - time.monotonic()) if job.rendered.is_set() else None
+            send_json(conn, {"ok": job.error is None, "done": job.done.is_set(), "stopped": job.cancel.is_set(),
+                             "ends_in": None if ends_in is None else round(ends_in, 2),
+                             "first_audio": job.first_audio, "error": job.error})
         elif cmd == "render":
             text, out = (req.get("text") or "").strip(), req.get("out")
             if not self.ready.is_set() or self.error:

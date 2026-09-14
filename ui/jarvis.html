@@ -11,6 +11,7 @@
     --left: #2a2f3a; --right: #2f6df6; --guest: #1f9d55; --ok: #3ecf8e; --warn: #f5b44a; --err: #ff6b6b;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
          background: var(--bg); color: var(--text); }
   header { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
@@ -28,13 +29,18 @@
   button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .4; cursor: default; }
   button.small { padding: .15rem .5rem; font-size: .85rem; }
-  input, select { font: inherit; color: var(--text); background: var(--field);
+  input, select, textarea { font: inherit; color: var(--text); background: var(--field);
                   border: 1px solid var(--line); border-radius: 8px; padding: .4rem .6rem;
                   width: 100%; min-width: 0; }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .tabs { display: inline-flex; border: 1px solid #333a48; border-radius: 8px; overflow: hidden; }
+  .tabs button { border: none; border-radius: 0; background: transparent; color: var(--muted); }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: #0b0d12; }
   main { display: grid; grid-template-columns: 230px minmax(0, 1fr) minmax(0, 1.3fr);
          gap: 1rem; padding: 1rem; height: calc(100vh - 62px); }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } }
+  main.article { grid-template-columns: 230px minmax(0, 1fr); }
+  @media (max-width: 900px) { main, main.article { grid-template-columns: 1fr; height: auto; } }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
             padding: .8rem; display: flex; flex-direction: column; min-height: 0; }
   .empty { color: var(--muted); font-size: .9rem; text-align: center; margin: auto; padding: 1rem; }
@@ -103,6 +109,36 @@
   .chip .chip-tool { color: var(--muted); padding: .2rem .35rem; }
   .chip .chip-tool:hover { color: var(--text); }
 
+  /* article */
+  .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .reader-pick { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--muted); }
+  .reader-pick select { width: auto; max-width: 15rem; }
+  #raw { flex: 1; margin: .6rem 0; resize: none; line-height: 1.55; }
+  #paras { flex: 1; overflow: auto; margin: .6rem 0; padding: .3rem 0;
+           border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .para { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: .4rem;
+          padding: .4rem .5rem .4rem 0; border-left: 3px solid transparent; border-radius: 6px;
+          transition: background .2s; }
+  .gutter { display: flex; flex-direction: column; align-items: flex-end; gap: .15rem;
+            font-size: .72rem; color: var(--muted); user-select: none; padding-top: .3rem; }
+  .ptools { display: flex; opacity: 0; }
+  .ptools button { background: transparent; border: none; color: var(--muted);
+                   padding: 0 .2rem; font-size: .85rem; }
+  .ptools button:hover { color: var(--text); }
+  .para:hover .ptools, .para:focus-within .ptools { opacity: 1; }
+  .pbody { min-width: 0; }
+  .pbody .tag { display: block; font-size: .72rem; color: var(--guest); margin: 0 .4rem .1rem; }
+  .pbody .tag:empty { display: none; }
+  .para .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1.02rem; line-height: 1.6;
+                padding: .15rem .4rem; border-radius: 6px; outline: none; cursor: text; }
+  .para .text:focus { background: var(--field); box-shadow: 0 0 0 1px var(--line); }
+  .para.current { background: #1b2540; border-left-color: var(--accent); }
+  .para.current .num { color: var(--accent); }
+  .para.next, .para.sent { border-left-color: var(--warn); }
+  .para.sent .pbody::before { content: "up next"; display: block; font-size: .72rem;
+                              color: var(--warn); margin: 0 .4rem .1rem; }
+  .para.resume .num::before { content: "▸ "; color: var(--accent); }
+
   body.not-ready .speaks { opacity: .55; }
   .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
            background: #333a48; padding: .5rem 1rem; border-radius: 8px;
@@ -116,7 +152,12 @@
   <span id="status" class="pill">checking…</span>
   <button id="start" type="button">Start Jarvis</button>
   <button id="stop" type="button" title="Esc — also clears anything waiting to be said">Stop talking</button>
-  <button id="quit" type="button">Shut down</button>
+  <button id="quit" type="button" title="Stops Jarvis and this page's server">Shut down</button>
+  <span class="spacer"></span>
+  <div class="tabs" role="tablist" aria-label="View">
+    <button id="tab-scene" type="button" role="tab">Panel + Conversation</button>
+    <button id="tab-article" type="button" role="tab">Article</button>
+  </div>
 </header>
 
 <main>
@@ -127,12 +168,12 @@
     <button id="reload" type="button" class="small">Reload list</button>
   </section>
 
-  <section>
+  <section class="scene">
     <h2>Panel</h2>
     <div id="panel" class="speaks"></div>
   </section>
 
-  <section>
+  <section class="scene">
     <h2>Conversation</h2>
     <div class="saved">
       <div class="saved-actions">
@@ -161,6 +202,29 @@
     <div class="hint">Click a line to edit it. Hover for ▶ play · ⇄ other side · ↑ ↓ · × delete, or drag ⠿ to reorder.
       A panel card's → (Ctrl+Enter) drops its line in here — green if they're not the left or right speaker.
       Lines wait their turn; Stop talking (Esc) clears the queue.</div>
+  </section>
+
+  <section id="article" hidden>
+    <h2>Article</h2>
+    <div class="toolbar">
+      <label class="reader-pick">Read by <select id="reader"></select></label>
+      <button id="read" type="button">▶ Read</button>
+      <button id="read-top" type="button" class="small" title="Next ▶ Read starts from the top" hidden>⟲ top</button>
+      <button id="read-stop" type="button" title="Stop now (Esc)" disabled>■ Stop</button>
+      <label class="check" title="Pause only at your ,,, / [breath] / [pause] marks and line breaks">
+        <input id="my-breaths" type="checkbox"> only my breaths</label>
+      <span class="spacer"></span>
+      <button id="edit-all" type="button" class="small">Edit as text</button>
+      <button id="article-copy" type="button" class="small">Copy text</button>
+      <button id="article-render" type="button" class="small" title="Download the whole article as a .wav">⬇ Render out</button>
+      <button id="article-clear" type="button" class="small">Clear</button>
+    </div>
+    <textarea id="raw" aria-label="Article text"
+      placeholder="Paste an article here (Markdown is fine). Blank lines separate the paragraphs."></textarea>
+    <div id="paras" aria-label="Article paragraphs"></div>
+    <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
+      ▶ read on from here · ⟳ play just this one (Ctrl+Enter); while it's reading, either one goes next.
+      A blank line splits a paragraph; a [voice] switch carries on until the next one.</div>
   </section>
 </main>
 
@@ -194,7 +258,8 @@ const saved = loadState();
 if (saved.v !== VERSION) saved.autospeak = false;   // "speak as I add" now starts off
 const state = Object.assign(
   { panel: [], left: "", right: "", lines: [], side: "left", autospeak: false,
-    name: "", convId: "", savedSnap: "" }, saved, { v: VERSION });
+    name: "", convId: "", savedSnap: "", mode: "scene" }, saved, { v: VERSION });
+state.article = Object.assign({ paras: [], voice: "", myBreaths: false, resumeId: 0 }, state.article);
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
 }
@@ -248,13 +313,13 @@ async function refreshStatus() {
   const loading = !ready && !s.error && (s.running || starting());
   const pill = $("#status");
   pill.className = "pill " + (ready ? "ok" : s.error ? "err" : loading ? "loading" : "");
-  pill.textContent = s.pageDown ? "page server stopped"
+  pill.textContent = s.pageDown ? "off · run ./jarvis-ui to start again"
     : s.error ? "error: " + s.error
     : ready ? (s.speaking ? "speaking…" : "ready") + " · " + labelFor(s.voice)
     : loading ? "loading Breeze…" : "not running";
   $("#start").disabled = Boolean(s.running || starting() || s.pageDown);
   $("#stop").disabled = !s.running;
-  $("#quit").disabled = !s.running;
+  $("#quit").disabled = Boolean(s.pageDown);
   document.body.classList.toggle("not-ready", !ready);
 }
 
@@ -264,15 +329,21 @@ $("#start").addEventListener("click", async () => {
   try { await api("/api/start", {}); }
   catch { startingSince = 0; toast("Couldn't reach the page's server"); }
 });
-$("#stop").addEventListener("click", () => api("/api/stop", {}).catch(() => {}));
+$("#stop").addEventListener("click", stopReading);
 $("#quit").addEventListener("click", async () => {
-  if (!confirm("Shut Jarvis down? That frees the GPU memory; starting again takes ~25 s.")) return;
+  if (!confirm("Shut everything down? Jarvis lets go of the GPU and this page's server stops. "
+               + "Run ./jarvis-ui to start again.")) return;
+  if (reader.active) stopReading();
   await api("/api/quit", {}).catch(() => {});
   refreshStatus();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") api("/api/stop", {}).catch(() => {});
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveConversation(); }
+  if (e.key === "Escape") stopReading();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (state.mode === "article") toast("The article is kept in this browser; Copy text takes it back to your post");
+    else saveConversation();
+  }
 });
 
 // ---- voices ---------------------------------------------------------------------------
@@ -280,18 +351,24 @@ async function loadVoices() {
   try { voices = (await api("/api/voices")).voices; } catch { voices = []; }
   renderVoices();
   renderSides();
+  renderReader();
+  paintArticle();
 }
 
 function renderVoices() {
   const query = $("#search").value.trim().toLowerCase();
   const shown = voices.filter((v) => v.toLowerCase().includes(query));
   const list = $("#voices");
+  // In the Article view a click picks who reads; otherwise it adds to the panel.
+  const reading = state.mode === "article";
   list.replaceChildren(...shown.map((voice) => {
-    const added = state.panel.some((m) => m.voice === voice);
+    const [text, title] = reading
+      ? voice === state.article.voice ? ["✓ reader", "Reading the article"] : ["read", "Have this voice read the article"]
+      : state.panel.some((m) => m.voice === voice) ? ["✓", "Already on the panel"] : ["+ panel", "Add to the panel"];
     return el("li", {}, [
       el("span", { class: "vname", title: voice }, voice),
-      el("button", { type: "button", class: "small", title: added ? "Already on the panel" : "Add to the panel",
-                     onclick: () => addToPanel(voice) }, added ? "✓" : "+ panel"),
+      el("button", { type: "button", class: "small", title,
+                     onclick: () => (reading ? setReader(voice) : addToPanel(voice)) }, text),
     ]);
   }));
   if (!shown.length) list.append(el("li", { class: "empty" }, voices.length ? "No match" : "No voices found"));
@@ -551,20 +628,16 @@ function playAll() {
 }
 $("#play-all").addEventListener("click", playAll);
 
-// Jarvis renders the whole conversation to a .wav (same finish as ./speak) and the
-// browser downloads it, named after the conversation.
-async function renderOut() {
-  if (!state.lines.length) return toast("Nothing to render yet");
-  if (state.lines.some((line) => !voiceOf(line))) return toast("Pick both voices first");
-  if (!ready) return toast("Start Jarvis first (top left)");
-  const button = $("#render");
-  const file = slug(state.name || "conversation") + ".wav";
+// Jarvis renders text to a .wav (same finish as ./speak) and the browser downloads it,
+// named after the conversation or article.
+async function renderWav(button, body) {
+  const file = slug(body.name) + ".wav";
+  const label = button.textContent;
   button.disabled = true;
   button.textContent = "Rendering…";
   try {
     const response = await fetch("/api/render", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: script(), name: state.name || "conversation" }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("audio/")) {
       const reply = await response.json().catch(() => ({}));
@@ -581,8 +654,15 @@ async function renderOut() {
     toast("The page's server isn't running");
   } finally {
     button.disabled = false;
-    button.textContent = "⬇ Render out";
+    button.textContent = label;
   }
+}
+
+function renderOut() {
+  if (!state.lines.length) return toast("Nothing to render yet");
+  if (state.lines.some((line) => !voiceOf(line))) return toast("Pick both voices first");
+  if (!ready) return toast("Start Jarvis first (top left)");
+  renderWav($("#render"), { text: script(), name: state.name || "conversation" });
 }
 $("#render").addEventListener("click", renderOut);
 $("#copy").addEventListener("click", async () => {
@@ -692,15 +772,387 @@ const autospeak = $("#autospeak");
 autospeak.checked = state.autospeak;
 autospeak.addEventListener("change", () => { state.autospeak = autospeak.checked; save(); });
 
+// ---- article: paste an article, pick who reads it, follow along paragraph by paragraph ----
+// Each paragraph goes to Jarvis only when its turn comes, so edits further down are
+// picked up live. Paragraphs keep ids, so edits and splits don't lose the reader's place.
+const article = state.article;
+const VOICE_MARK = /\[([\w.-]+)\]/g;
+article.paras = (Array.isArray(article.paras) ? article.paras : [])
+  .filter((p) => p && typeof p.text === "string" && p.text.trim());
+let paraSeq = article.paras.reduce((top, p) => Math.max(top, Number(p.id) || 0), 0);
+for (const p of article.paras) if (!p.id) p.id = ++paraSeq;
+const newPara = (text) => ({ id: ++paraSeq, text });
+const paraIndex = (id) => article.paras.findIndex((p) => p.id === id);
+const paraNodes = new Map();     // paragraph id -> its elements, reused across renders
+const reader = { active: false, run: 0, currentId: 0, next: null, pauseAfter: false,
+                 sentId: 0, warned: new Set(), read: new Set(), stopping: null };
+let rawMode = !article.paras.length;
+let saveTimer;
+const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); };
+
+function setMode(mode) {
+  state.mode = mode === "article" ? "article" : "scene";
+  const isArticle = state.mode === "article";
+  $("main").classList.toggle("article", isArticle);
+  document.querySelectorAll(".scene").forEach((section) => { section.hidden = isArticle; });
+  $("#article").hidden = !isArticle;
+  $("#tab-scene").setAttribute("aria-selected", String(!isArticle));
+  $("#tab-article").setAttribute("aria-selected", String(isArticle));
+  save();
+  renderVoices();
+}
+$("#tab-scene").addEventListener("click", () => setMode("scene"));
+$("#tab-article").addEventListener("click", () => { setMode("article"); if (rawMode) $("#raw").focus(); });
+
+// Blank lines separate paragraphs; text with none at all (pasted from some apps) splits per line.
+function splitParagraphs(text) {
+  const clean = text.replace(/\r\n?/g, "\n").trim();
+  const parts = /\n[ \t]*\n/.test(clean) ? clean.split(/\n[ \t]*\n/) : clean.split("\n");
+  return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+function renderReader() {
+  const choices = [...new Set([...voices, ...(article.voice ? [article.voice] : [])])];
+  $("#reader").replaceChildren(el("option", { value: "" }, "— pick a voice —"), ...choices.map((voice) => {
+    const name = labelFor(voice);
+    const option = el("option", { value: voice }, name === voice ? voice : `${name} (${voice})`);
+    option.selected = voice === article.voice;
+    return option;
+  }));
+}
+
+function setReader(voice) {
+  article.voice = voice;
+  save();
+  renderReader();
+  renderVoices();
+  paintArticle();
+}
+$("#reader").addEventListener("change", (e) => setReader(e.target.value));
+
+const myBreaths = $("#my-breaths");
+myBreaths.checked = article.myBreaths;
+myBreaths.addEventListener("change", () => { article.myBreaths = myBreaths.checked; save(); });
+
+function paraNode(para) {
+  const id = para.id;
+  if (paraNodes.has(id)) return paraNodes.get(id).row;
+  const text = el("div", { class: "text", spellcheck: "true", "aria-label": "Paragraph" }, para.text);
+  try { text.contentEditable = "plaintext-only"; } catch { text.contentEditable = "true"; }
+  text.addEventListener("input", () => {
+    const current = article.paras[paraIndex(id)];
+    if (current) { current.text = text.innerText; saveSoon(); }
+    if (reader.active && (id === reader.currentId || id === reader.sentId) && !reader.warned.has(id)) {
+      reader.warned.add(id);
+      toast("Jarvis already has this paragraph: press ⟳ afterwards to hear your change");
+    }
+  });
+  text.addEventListener("blur", () => commitParagraph(id));
+  text.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitParagraph(id); read(id, true); }
+  });
+  const tool = (label, title, action) =>
+    el("button", { type: "button", title, "aria-label": title, onclick: action }, label);
+  const num = el("span", { class: "num" });
+  const tag = el("span", { class: "tag" });
+  const row = el("div", { class: "para" }, [
+    el("div", { class: "gutter" }, [
+      num,
+      el("div", { class: "ptools" }, [
+        tool("▶", "Read on from here", () => read(id)),
+        tool("⟳", "Play just this paragraph (Ctrl+Enter)", () => read(id, true)),
+      ]),
+    ]),
+    el("div", { class: "pbody" }, [tag, text]),
+  ]);
+  paraNodes.set(id, { row, text, num, tag });
+  return row;
+}
+
+// Leaving a paragraph tidies it: a blank line splits it in two, emptying it removes it.
+function commitParagraph(id) {
+  const index = paraIndex(id);
+  const node = paraNodes.get(id);
+  if (index < 0 || !node) return;
+  const parts = node.text.innerText.replace(/\r\n?/g, "\n").split(/\n[ \t]*\n/)
+    .map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) {
+    article.paras.splice(index, 1);
+  } else {
+    article.paras[index].text = parts[0];
+    article.paras.splice(index + 1, 0, ...parts.slice(1).map((part) => newPara(part)));
+  }
+  if (!article.paras.length) rawMode = true;
+  save();
+  renderArticle();
+}
+
+function renderArticle() {
+  $("#raw").hidden = !rawMode;
+  $("#paras").hidden = rawMode;
+  $("#edit-all").textContent = rawMode ? "Done" : "Edit as text";
+  const list = $("#paras");
+  for (const [id, node] of [...paraNodes]) {
+    if (paraIndex(id) < 0) { node.row.remove(); paraNodes.delete(id); }
+  }
+  // Only move what changed, so the paragraph you're typing in keeps its focus.
+  article.paras.map(paraNode).forEach((row, i) => {
+    if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null);
+  });
+  paintArticle();
+}
+
+// Highlights and labels only; cheap enough to run on every step of the reader.
+function paintArticle() {
+  const known = new Set(voices);
+  let voice = article.voice;
+  article.paras.forEach((para, i) => {
+    const node = paraNodes.get(para.id);
+    if (!node) return;
+    node.num.textContent = "¶" + (i + 1);
+    node.tag.textContent = voice && voice !== article.voice ? labelFor(voice) : "";
+    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
+    node.row.classList.toggle("current", para.id === reader.currentId);
+    node.row.classList.toggle("read", reader.read.has(para.id));
+    node.row.classList.toggle("next", Boolean(reader.next && reader.next.id === para.id));
+    node.row.classList.toggle("sent", reader.active && para.id === reader.sentId);
+    node.row.classList.toggle("resume", !reader.active && para.id === article.resumeId);
+    if (document.activeElement !== node.text && node.text.textContent !== para.text) {
+      node.text.textContent = para.text;
+    }
+  });
+  const start = paraIndex(article.resumeId);
+  const pauseAt = paraIndex(reader.sentId || reader.currentId);   // the last one Jarvis has
+  $("#read").textContent = reader.active
+    ? reader.pauseAfter ? "▶ Keep going" : pauseAt >= 0 ? `⏸ Pause after ¶${pauseAt + 1}` : "⏸ Pause after this ¶"
+    : start > 0 ? `▶ Read from ¶${start + 1}` : "▶ Read";
+  $("#read-stop").disabled = !reader.active;
+  $("#read-top").hidden = reader.active || start <= 0;
+}
+
+// Who's reading at the start of paragraph `index`: the reader, or the last [voice]
+// switch before it (a switch carries on, as it does in ./speak and Render out).
+function voiceAt(index) {
+  const known = new Set(voices);
+  let voice = article.voice;
+  for (const para of article.paras.slice(0, index)) {
+    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
+  }
+  return voice;
+}
+
+function follow(id) {
+  const node = paraNodes.get(id);
+  const editing = document.activeElement && document.activeElement.closest("#paras, #raw");
+  if (node && !editing && !rawMode) node.row.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+// Servers started before an update don't know about following a paragraph: say which to restart.
+function outdated(error) {
+  if (error === "not found") return "Restart ./jarvis-ui (Ctrl+C, run it again): it's older than this page";
+  if (/unknown cmd/.test(error || "")) return "Shut down and Start Jarvis again: it's older than this page";
+  return "";
+}
+
+// The reader keeps Jarvis one paragraph ahead: a few seconds before the paragraph being
+// read ends, the next one is sent, so it follows after a normal paragraph pause (the same
+// pause as ./speak and Render out). Until it's sent, edits to it still count.
+const OFFLINE = { error: "The page's server isn't running" };
+let lead = 4;   // seconds before the end to send the next one; follows how fast Jarvis starts
+
+// Send paragraph `id`, or the first one from there with something to say (one that's only
+// Markdown, like a --- rule, is passed over). null at the end of the article.
+async function sendFrom(id, once) {
+  for (let index = paraIndex(id); index >= 0 && index < article.paras.length; index++) {
+    const para = article.paras[index];
+    const reply = !para.text.trim() ? { skipped: true } : await api("/api/say", {
+      voice: voiceAt(index), text: para.text, markdown: true, my_breaths: article.myBreaths,
+      queue: true, gap_ms: article.myBreaths ? 800 : 900 }).catch(() => OFFLINE);
+    if (reply.skipped) {
+      reader.read.add(para.id);
+      if (once) return null;
+      continue;
+    }
+    if (!reply.ok) throw new Error(reply.error || "Jarvis didn't answer");
+    return { para: para.id, index, line: reply.id, once };
+  }
+  return null;
+}
+
+// The paragraph after `cur`, even if edits moved or removed it meanwhile.
+function following(cur) {
+  const at = paraIndex(cur.para);
+  return article.paras[at >= 0 ? at + 1 : cur.index];
+}
+
+// What reads after `cur`: a paragraph you asked for (▶ / ⟳ while reading), else the next
+// one, unless `cur` was a single paragraph or you asked to pause.
+function sendNext(cur) {
+  if (reader.next) {
+    const { id, once } = reader.next;
+    reader.next = null;
+    return sendFrom(id, once);
+  }
+  const after = following(cur);
+  return cur.once || reader.pauseAfter || !after ? null : sendFrom(after.id, false);
+}
+
+// Read from paragraph `fromId` to the end (or just that one). While reading, this never
+// cuts off anything: the request goes next instead.
+async function read(fromId, once = false) {
+  if (reader.active) {
+    Object.assign(reader, { next: { id: fromId, once }, pauseAfter: false });
+    paintArticle();
+    const queued = paraIndex(reader.sentId);
+    return toast((once ? "That paragraph plays next" : "Reading on from there next")
+      + (queued >= 0 ? `, after ¶${queued + 1} (already on its way)` : ""));
+  }
+  if (!article.voice) return toast("Pick who reads it first");
+  if (!ready) return toast("Start Jarvis first (top left)");
+  const run = ++reader.run;
+  Object.assign(reader, { active: true, next: null, pauseAfter: false, sentId: 0, warned: new Set() });
+  paintArticle();
+  await reader.stopping;          // a Stop still on its way mustn't catch the new start
+  try {
+    let cur = run === reader.run ? await sendFrom(fromId, once) : null;
+    while (cur && run === reader.run) {
+      Object.assign(reader, { currentId: cur.para, sentId: 0 });
+      if (!cur.once) article.resumeId = cur.para;
+      paintArticle();
+      follow(cur.para);
+      // Follow it until it has been heard; near its end, send whatever comes next.
+      let next = null;
+      let closing = false;
+      let stopped = false;
+      for (;;) {
+        const ask = next ? { id: cur.line } : closing ? { id: cur.line, timeout: 0.3 } : { id: cur.line, lead };
+        const status = await api("/api/wait", ask).catch(() => OFFLINE);
+        if (run !== reader.run) return;
+        if (!status.ok) throw new Error(outdated(status.error) || status.error || "Lost track of Jarvis");
+        if (status.first_audio) lead = Math.min(12, Math.max(3, status.first_audio + 2));
+        if (status.stopped) { stopped = true; break; }
+        closing = closing || status.done || (status.ends_in != null && status.ends_in <= lead);
+        if (closing && !next) {
+          next = await sendNext(cur);
+          if (run !== reader.run) return;
+          reader.sentId = next ? next.para : 0;
+          paintArticle();
+        }
+        if (status.done) break;
+      }
+      if (stopped) break;
+      reader.read.add(cur.para);
+      if (!cur.once) {
+        const after = following(cur);
+        article.resumeId = after ? after.id : 0;
+      }
+      cur = next;
+    }
+  } catch (error) {
+    if (run === reader.run) toast(error.message);
+  } finally {
+    if (run === reader.run) {
+      Object.assign(reader, { active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
+    }
+    save();
+    paintArticle();
+  }
+}
+
+function stopReading() {
+  if (reader.active) {
+    reader.run++;
+    Object.assign(reader, { active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
+    paintArticle();
+  }
+  reader.stopping = api("/api/stop", {}).catch(() => {});
+}
+
+$("#read").addEventListener("click", () => {
+  if (reader.active) {
+    reader.pauseAfter = !reader.pauseAfter;
+    const queued = paraIndex(reader.sentId);
+    if (reader.pauseAfter && queued >= 0) toast(`Pausing after ¶${queued + 1}: it's already on its way`);
+    return paintArticle();
+  }
+  if (rawMode) setRaw(false);
+  const start = article.paras[Math.max(paraIndex(article.resumeId), 0)];
+  if (start) read(start.id);
+  else toast("Paste an article first");
+});
+$("#read-top").addEventListener("click", () => { article.resumeId = 0; save(); paintArticle(); });
+$("#read-stop").addEventListener("click", stopReading);
+
+// "Edit as text": the whole article in one box, for big edits and pasting.
+function setRaw(on) {
+  const raw = $("#raw");
+  if (on) {
+    raw.value = article.paras.map((p) => p.text).join("\n\n");
+  } else {
+    const unchanged = new Map(article.paras.map((p) => [p.text, p]));
+    article.paras = splitParagraphs(raw.value).map((text) => {
+      const kept = unchanged.get(text);
+      unchanged.delete(text);
+      return kept || newPara(text);
+    });
+    save();
+  }
+  rawMode = on || !article.paras.length;
+  renderArticle();
+  if (rawMode) raw.focus();
+}
+$("#edit-all").addEventListener("click", () => setRaw(!rawMode));
+$("#raw").addEventListener("paste", () => {
+  if (!$("#raw").value.trim()) setTimeout(() => setRaw(false), 0);   // just paste and go
+});
+
+$("#article-clear").addEventListener("click", () => {
+  if (article.paras.length && !confirm("Clear the article? Copy text first if you want to keep your edits.")) return;
+  if (reader.active) stopReading();
+  article.paras = [];
+  article.resumeId = 0;
+  reader.read.clear();
+  $("#raw").value = "";
+  rawMode = true;
+  save();
+  renderArticle();
+  $("#raw").focus();
+});
+
+$("#article-copy").addEventListener("click", async () => {
+  const text = rawMode ? $("#raw").value : article.paras.map((p) => p.text).join("\n\n");
+  if (!text.trim()) return toast("Nothing to copy yet");
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied, marks and all: paste it back into your post");
+  } catch {
+    toast("Couldn't copy (the browser blocked the clipboard)");
+  }
+});
+
+$("#article-render").addEventListener("click", () => {
+  if (rawMode) setRaw(false);
+  if (!article.paras.length) return toast("Nothing to render yet");
+  if (!article.voice) return toast("Pick who reads it first");
+  if (!ready) return toast("Start Jarvis first (top left)");
+  const title = article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60);
+  renderWav($("#article-render"), { text: article.paras.map((p) => p.text).join("\n\n"),
+                                    voice: article.voice, markdown: true, my_breaths: article.myBreaths,
+                                    name: title || "article" });
+});
+
 function render() {
   renderVoices();
   renderPanel();
   renderSides();
   renderThread();
   renderSaved();
+  renderReader();
+  renderArticle();
 }
 
 save();
+setMode(state.mode);
 render();
 loadVoices();
 loadSavedList();

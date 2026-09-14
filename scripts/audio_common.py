@@ -154,7 +154,9 @@ def pacing_plan(text: str, sentence_ms=450, para_ms=900, pause_ms=700, breath_ms
 
 
 def strip_markdown(text: str) -> str:
+    text = re.sub(r"\A---\n.*?\n---[ \t]*(\n|\Z)", "", text, flags=re.DOTALL)   # front matter
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    text = re.sub(r"^[ \t]{0,3}(?:[-*_][ \t]*){3,}$", "", text, flags=re.MULTILINE)  # --- rules
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
     # Links keep their text — but only when the target looks like a URL or path, so a
     # voice switch followed by a sound, "[art-bell](sighs)", isn't mistaken for a link.

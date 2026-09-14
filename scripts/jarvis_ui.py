@@ -4,17 +4,20 @@ jarvis_ui.py — a small local web page for Jarvis: see the voices, build a pane
 speakers (Orc, Bard, ...) who each say a line on demand, and script left/right,
 iMessage-style conversations that Jarvis reads out loud.
 
-  ./jarvis-ui                      serve http://127.0.0.1:8765 and open it
-  ./jarvis-ui --port 9000 --no-open
+  ./jarvis-ui                      start Jarvis, serve http://127.0.0.1:8765 and open it
+  ./jarvis-ui --port 9000 --no-open --no-start --keep-jarvis
 
-The page talks to this server; this server talks to the Jarvis server (starting it
-when you press Start) the same way ./jarvis does. It only listens on 127.0.0.1.
+The page talks to this server; this server talks to the Jarvis server the same way
+./jarvis does. Shut down on the page, or Ctrl+C here, stops both (--keep-jarvis
+leaves Jarvis running). It only listens on 127.0.0.1.
 """
 import argparse
 import json
 import re
+import signal
 import sys
 import tempfile
+import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jarvis_daemon as jarvis  # noqa: E402
+from audio_common import strip_markdown  # noqa: E402
 from index_speak import list_voices  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent.parent / "ui" / "jarvis.html"
@@ -142,23 +146,50 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "started": started})
         elif self.path == "/api/say":
             # Lines from the page wait their turn instead of cutting off what's playing;
-            # only Stop talking interrupts.
-            resp = jarvis.request({"cmd": "say", "text": str(body.get("text", "")),
-                                   "voice": body.get("voice") or None,
-                                   "my_breaths": bool(body.get("my_breaths")),
-                                   "queue": bool(body.get("queue", True))}, timeout=15)
+            # only Stop talking interrupts. The reply's id can be followed with /api/wait.
+            text = str(body.get("text", ""))
+            if body.get("markdown"):
+                text = strip_markdown(text)
+                if not text:
+                    return self.send_json({"ok": True, "skipped": True})   # only Markdown syntax
+            msg = {"cmd": "say", "text": text, "voice": body.get("voice") or None,
+                   "my_breaths": bool(body.get("my_breaths")), "queue": bool(body.get("queue", True))}
+            if isinstance(body.get("gap_ms"), int):
+                msg["gap_ms"] = body["gap_ms"]   # the pause before it, if something is still playing
+            resp = jarvis.request(msg, timeout=15)
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
-        elif self.path in ("/api/stop", "/api/quit"):
-            cmd = self.path.rsplit("/", 1)[1]
-            resp = jarvis.request({"cmd": cmd}, timeout=5)
-            if cmd == "quit":
-                self.server.last_start = 0.0
+        elif self.path == "/api/wait":
+            # Long-poll: returns when the line is done playing (or, with `lead`, about to be),
+            # or after ~20 s (then ask again).
+            try:
+                line = int(body.get("id"))
+            except (TypeError, ValueError):
+                return self.send_json({"ok": False, "error": "needs a line id"}, 400)
+            msg = {"cmd": "wait", "id": line, "timeout": 20}
+            for key, top in (("timeout", 20), ("lead", 30)):
+                if isinstance(body.get(key), (int, float)):
+                    msg[key] = min(max(float(body[key]), 0.0), top)
+            resp = jarvis.request(msg, timeout=30)
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
+        elif self.path == "/api/stop":
+            resp = jarvis.request({"cmd": "stop"}, timeout=5)
+            self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
+        elif self.path == "/api/quit":
+            # Shut down = everything: Jarvis (frees the GPU), then this page's server.
+            had_jarvis = bool(jarvis.request({"cmd": "quit"}, timeout=5))
+            self.send_json({"ok": True, "jarvis": had_jarvis})
+            print("[jarvis-ui] shut down from the page", flush=True)
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
         elif self.path == "/api/render":
             # Jarvis renders into a temp folder; the browser's download is the only copy kept.
             text = str(body.get("text", "")).strip()
+            if body.get("markdown"):
+                text = strip_markdown(text)
             if not text:
                 return self.send_json({"ok": False, "error": "nothing to render"}, 400)
+            voice = str(body.get("voice") or "")
+            if voice in list_voices():
+                text = f"[{voice}] {text}"   # who reads until a [voice] mark says otherwise
             with tempfile.TemporaryDirectory(prefix="jarvis-render-") as tmp:
                 out = Path(tmp) / "render.wav"
                 resp = jarvis.request({"cmd": "render", "text": text, "out": str(out),
@@ -197,10 +228,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "not found"}, 404)
 
 
+def interrupted(*_):
+    raise KeyboardInterrupt
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="A local web page for Jarvis.")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-open", action="store_true", help="Don't open the page in a browser.")
+    ap.add_argument("--no-start", action="store_true",
+                    help="Don't start Jarvis (press Start on the page when you want it).")
+    ap.add_argument("--keep-jarvis", action="store_true",
+                    help="Leave Jarvis running when the page stops with Ctrl+C.")
     args = ap.parse_args()
 
     try:
@@ -211,14 +250,28 @@ def main() -> int:
         return 1
     server.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}
     server.last_start = 0.0
+    if not args.no_start:
+        if jarvis.start_server():
+            server.last_start = time.time()
+            print("[jarvis-ui] starting Jarvis (loading Breeze, ~25 s; the page shows when it's ready)")
+        else:
+            print("[jarvis-ui] Jarvis is already running")
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"[jarvis-ui] {url}  (Ctrl+C stops the page; Jarvis keeps running until you shut it down)")
+    print(f"[jarvis-ui] {url}  (Shut down on the page, or Ctrl+C here, stops the page"
+          f"{'' if args.keep_jarvis else ' and Jarvis'})")
     if not args.no_open:
         webbrowser.open_new_tab(url)
+    for sig in (signal.SIGTERM, signal.SIGHUP):   # a kill or a closed terminal counts as Ctrl+C
+        signal.signal(sig, interrupted)
     try:
-        server.serve_forever()
+        server.serve_forever()   # returns when Shut down is pressed on the page
     except KeyboardInterrupt:
-        pass
+        if not args.keep_jarvis and jarvis.request({"cmd": "quit"}, timeout=5):
+            try:
+                print("\n[jarvis-ui] shut Jarvis down too (--keep-jarvis leaves it running)")
+            except OSError:
+                pass   # the terminal is already gone
+    server.server_close()
     return 0
 
 
