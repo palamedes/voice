@@ -174,6 +174,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/stop":
             resp = jarvis.request({"cmd": "stop"}, timeout=5)
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
+        elif self.path == "/api/render/cancel":
+            resp = jarvis.request({"cmd": "cancel_render"}, timeout=5)
+            self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
         elif self.path == "/api/quit":
             # Shut down = everything: Jarvis (frees the GPU), then this page's server.
             had_jarvis = bool(jarvis.request({"cmd": "quit"}, timeout=5))

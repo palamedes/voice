@@ -112,8 +112,9 @@ def trim_ref(src: Path, start: float, secs):
     return tmp
 
 
-def trim_edges(audio, sr, floor_db=-40, pad_ms=40):
-    """Cut the model's own leading/trailing silence so the gaps we insert are exact.
+def trim_edges(audio, sr, floor_db=-40, pad_ms=40, fade_ms=25):
+    """Cut the model's own leading/trailing silence so the gaps we insert are exact, and
+    fade out the last fade_ms so a sentence never stops on a hard edge.
     Quiet = 10 ms frames more than floor_db below the chunk's loudest frame."""
     hop = sr // 100
     n = len(audio) // hop
@@ -124,7 +125,38 @@ def trim_edges(audio, sr, floor_db=-40, pad_ms=40):
     if not len(loud):
         return audio
     pad = sr * pad_ms // 1000
-    return audio[max(0, loud[0] * hop - pad):min(len(audio), (loud[-1] + 1) * hop + pad)]
+    kept = audio[max(0, loud[0] * hop - pad):min(len(audio), (loud[-1] + 1) * hop + pad)]
+    return fade_out(kept, sr, fade_ms)
+
+
+def fade_out(audio, sr, ms):
+    """Ease the last `ms` of int16 audio down to silence."""
+    n = min(len(audio), sr * ms // 1000)
+    if n <= 0:
+        return audio
+    out = audio.astype(np.float32)
+    out[-n:] *= np.cos(np.linspace(0, np.pi / 2, n)) ** 2
+    return out.astype(np.int16)
+
+
+def stopped_mid_sound(audio, sr, floor_db=-40):
+    """Does this audio end while still sounding: its last 20 ms within floor_db of its
+    loudest 20 ms (the same 'quiet' line as trim_edges)?"""
+    hop = sr // 50
+    n = len(audio) // hop
+    if n < 2:
+        return False
+    x = audio[len(audio) - n * hop:].astype(np.float64).reshape(n, hop)
+    rms = np.sqrt((x ** 2).mean(axis=1))
+    return bool(rms[-1] > rms.max() * 10 ** (floor_db / 20))
+
+
+# Breeze sometimes decides a sentence is over in the very 80 ms frame its last word ends
+# in, so the word's natural fade (the hiss of "sense" dying away) is never made and the
+# audio stops dead. When it first says "done", it makes up to this many more frames; if
+# it had stopped mid-sound, they carry the fade (made by the model itself) and are kept,
+# fading out. Otherwise they're dropped.
+TAIL_FRAMES = 2
 
 
 # With --my-breaths, the model's own pauses inside a chunk are cut down to this.
@@ -343,6 +375,28 @@ def load_breeze(fast=False):
     config = FastStreamingConfig(max_new_tokens=1500, max_seq_len=2048, repetition_penalty=1.1,
                                  fast_backbone_decode=fast, fast_depth_decoder=fast, fast_codec=fast)
     runtime = FastBreezeStreamingRuntime(model, audio_tokenizer, config, tokenizer=tokenizer)
+
+    # Let Breeze finish the word (see TAIL_FRAMES): the streaming loop picks each next
+    # token with sample_logits; the first TAIL_FRAMES times it picks end-of-speech
+    # (token id vocab_size) in a chunk, pick again without it.
+    import models.fast_streaming as fast_streaming
+    eos = int(model.config.vocab_size)
+    frame = int(audio_tokenizer.get_decode_upsample_rate())   # samples per 80 ms frame
+    tail = {"left": 0, "added": 0, "steps": 0}
+    sample = fast_streaming.sample_logits
+
+    def sample_with_tail(logits, **kwargs):
+        token = sample(logits, **kwargs)
+        tail["steps"] += 1
+        if (tail["left"] and tail["steps"] > 5 and logits.shape[-1] == eos + 1
+                and int(token.reshape(-1)[0]) == eos):
+            tail["left"] -= 1
+            tail["added"] += 1
+            blocked = [*map(int, kwargs.get("suppress_tokens") or ()), eos]
+            token = sample(logits, **{**kwargs, "suppress_tokens": blocked})
+        return token
+    fast_streaming.sample_logits = sample_with_tail
+
     if runtime.fast_enabled:
         # Warm only the one-branch (CFG 1) graphs we use; unfrozen, anything else is
         # captured on first use instead of failing.
@@ -362,10 +416,24 @@ def load_breeze(fast=False):
         inputs = prepare_inputs(tokenizer, audio_tokenizer, model, [request],
                                 get_template(select_template_name(request)),
                                 guidance_scale=1.0, guidance_scale_ref=None, guidance_scale_ins=None)
-        audio = np.concatenate([np.asarray(c.audio).reshape(-1)
-                                for c in runtime.iter_audio_chunks(inputs, request_id="chunk", seed=42)])
+        tail.update(left=TAIL_FRAMES, added=0, steps=0)
+        try:
+            audio = np.concatenate([np.asarray(c.audio).reshape(-1)
+                                    for c in runtime.iter_audio_chunks(inputs, request_id="chunk", seed=42)])
+        finally:
+            tail["left"] = 0
         if audio.dtype.kind == "f":
             audio = np.clip(audio, -1, 1) * 32767
+        audio = audio.astype(np.float32)
+        # The frames made after Breeze first said "done": if it stopped mid-sound they carry
+        # the word's fade, so keep them and let them die away completely. If the word had
+        # already faded, they tend to hold something new (a breath, a click): drop them.
+        extra = min(len(audio), tail["added"] * frame)
+        if extra and stopped_mid_sound(audio[:-extra], runtime.sample_rate):
+            audio[-extra:] *= np.cos(np.linspace(0, np.pi / 2, extra)) ** 2
+        elif extra:
+            audio, extra = audio[:-extra], 0
+        render.tail_samples = extra     # how much of this render came after "done"
         return audio.astype(np.int16)
     return render, runtime.sample_rate
 

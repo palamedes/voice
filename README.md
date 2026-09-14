@@ -172,8 +172,10 @@ character in a story or a D&D session its own voice:
   to a file with `./speak --file` (quit Jarvis first, since both need the GPU).
   **⬇ Render out** downloads the whole conversation as a `.wav` named after
   it: the running Jarvis renders it with the same pacing, voice levelling and
-  loudness as `./speak` (in roughly 40% of the audio's length; anything you
-  send meanwhile waits), and the download is the only copy kept.
+  loudness as `./speak` (in roughly 40% of the audio's length), and the
+  download is the only copy kept. While it renders, the page waits behind a
+  box showing how far along it is and about how long is left; **Cancel**
+  stops the render.
   "Speak each line as I add it" is off by default.
 - **Nothing on the page interrupts:** a line you send while Jarvis is talking
   waits its turn and plays after a short beat, so you can type as fast as you

@@ -139,6 +139,17 @@
                               color: var(--warn); margin: 0 .4rem .1rem; }
   .para.resume .num::before { content: "▸ "; color: var(--accent); }
 
+  /* rendering */
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center;
+             justify-content: center; padding: 1rem; background: rgba(8, 10, 14, .72); }
+  .overlay-box { width: min(26rem, 100%); background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 12px; padding: 1.2rem; display: grid; gap: .6rem; }
+  .overlay-box h3 { margin: 0; font-size: 1.05rem; }
+  .overlay-box p { margin: 0; }
+  .bar { height: .5rem; border-radius: 999px; background: var(--field); overflow: hidden; }
+  #render-bar { height: 100%; width: 0; background: var(--accent); transition: width .5s; }
+  #render-cancel { justify-self: end; }
+
   body.not-ready .speaks { opacity: .55; }
   .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
            background: #333a48; padding: .5rem 1rem; border-radius: 8px;
@@ -228,6 +239,16 @@
   </section>
 </main>
 
+<div id="rendering" class="overlay" hidden>
+  <div class="overlay-box" role="alertdialog" aria-labelledby="render-title" aria-describedby="render-detail">
+    <h3 id="render-title">Rendering <span id="render-name"></span></h3>
+    <div class="bar" aria-hidden="true"><div id="render-bar"></div></div>
+    <p id="render-detail" aria-live="polite">Getting started…</p>
+    <p class="hint">Jarvis is busy rendering, so the rest of the page waits until it's done.</p>
+    <button id="render-cancel" type="button">Cancel</button>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -307,7 +328,15 @@ async function say(voice, text) {
 // ---- Jarvis status ----------------------------------------------------------------
 async function refreshStatus() {
   let s;
+  const asked = Date.now();
   try { s = await api("/api/status"); } catch { s = { pageDown: true }; }
+  // A render in progress (from this page, another tab, or before a reload) locks the page.
+  if (s.rendering && asked > renderView.hiddenAt) {
+    if ($("#rendering").hidden) setRenderLock(true);
+    paintRendering(s.rendering);
+  } else if (!s.rendering && !renderView.local && !$("#rendering").hidden) {
+    setRenderLock(false);
+  }
   ready = Boolean(s.running && s.ready && !s.error);
   if (s.running) startingSince = 0;
   const loading = !ready && !s.error && (s.running || starting());
@@ -338,6 +367,7 @@ $("#quit").addEventListener("click", async () => {
   refreshStatus();
 });
 document.addEventListener("keydown", (e) => {
+  if (!$("#rendering").hidden) return;      // the page waits while Jarvis renders
   if (e.key === "Escape") stopReading();
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
     e.preventDefault();
@@ -635,13 +665,14 @@ async function renderWav(button, body) {
   const label = button.textContent;
   button.disabled = true;
   button.textContent = "Rendering…";
+  showRendering(body.name, body.text);
   try {
     const response = await fetch("/api/render", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("audio/")) {
       const reply = await response.json().catch(() => ({}));
-      return toast(reply.error || "Couldn't render it");
+      return toast(reply.error === "cancelled" ? "Render cancelled" : reply.error || "Couldn't render it");
     }
     const url = URL.createObjectURL(await response.blob());
     const link = el("a", { href: url, download: file });
@@ -655,8 +686,57 @@ async function renderWav(button, body) {
   } finally {
     button.disabled = false;
     button.textContent = label;
+    hideRendering();
   }
 }
+
+// ---- while Jarvis renders: lock the page, show how far along it is ------------------------
+const renderView = { local: false, chars: 0, hiddenAt: 0, timer: 0 };
+
+function setRenderLock(on) {
+  $("#rendering").hidden = !on;
+  $("header").inert = on;
+  $("main").inert = on;
+}
+
+function showRendering(name, text) {
+  Object.assign(renderView, { local: true, chars: text.length });
+  $("#render-name").textContent = name ? `“${name}”` : "";
+  paintRendering(null);
+  setRenderLock(true);
+  clearInterval(renderView.timer);
+  renderView.timer = setInterval(refreshStatus, 1000);
+}
+
+function hideRendering() {
+  clearInterval(renderView.timer);
+  Object.assign(renderView, { local: false, hiddenAt: Date.now() });
+  setRenderLock(false);
+}
+
+const roughly = (s) => (s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
+
+// Until the first sentence is done, the time left is a guess from the text (~15
+// characters per second of audio, rendered in ~40% of its length); then it's measured.
+function paintRendering(p) {
+  let share = 0;
+  let detail;
+  if (!p) {
+    detail = `Getting started… about ${roughly(renderView.chars / 15 * 0.4)}`;
+  } else if (p.waiting) {
+    detail = "Waiting for Jarvis to finish what it's saying…";
+  } else if (p.finishing) {
+    share = 1;
+    detail = "Almost done: evening out the voices and the loudness…";
+  } else {
+    share = p.chars ? p.chars_done / p.chars : 0;
+    const left = p.chars_done ? p.elapsed / p.chars_done * (p.chars - p.chars_done) : p.chars / 15 * 0.4;
+    detail = `${p.done} of ${p.total} sentences · about ${roughly(left)} left`;
+  }
+  $("#render-bar").style.width = `${Math.round(share * 100)}%`;
+  $("#render-detail").textContent = detail;
+}
+$("#render-cancel").addEventListener("click", () => api("/api/render/cancel", {}).catch(() => {}));
 
 function renderOut() {
   if (!state.lines.length) return toast("Nothing to render yet");

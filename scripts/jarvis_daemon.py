@@ -91,6 +91,7 @@ class Job:
         self.rendered = threading.Event()   # a line: all its audio is with the player,
         self.ends_at = 0.0                   # ...which finishes playing it then (monotonic)
         self.first_audio = None              # seconds until its first sentence was ready
+        self.progress = None                 # a render: how far along it is
 
 
 # ---------------------------------------------------------------------- server
@@ -166,11 +167,18 @@ class Jarvis:
 
     def render_file(self, job: Job, text: str, auto: bool, out: str):
         """Render text to a wav file instead of the speakers — same pacing, voice levelling
-        and loudness normalization as ./speak (Stop talking doesn't cancel it)."""
+        and loudness normalization as ./speak. Stop talking doesn't cancel it; cancel_render
+        does (between sentences). Its progress shows in ping's "rendering"."""
         from audio_common import pacing_plan
         from index_speak import assemble, list_voices, tighten_pauses, trim_edges
+        plan = pacing_plan(text, auto=auto, voices=set(list_voices()))
+        job.progress = {"done": 0, "total": len(plan), "chars_done": 0, "finishing": False,
+                        "chars": sum(len(chunk) for chunk, _, _ in plan), "started": time.monotonic()}
         rendered = []
-        for chunk, pause_ms, voice in pacing_plan(text, auto=auto, voices=set(list_voices())):
+        for chunk, pause_ms, voice in plan:
+            if job.cancel.is_set():
+                job.done.set()
+                return
             voice = voice or self.voice
             speech = None
             if chunk:
@@ -178,8 +186,23 @@ class Jarvis:
                 if not auto:
                     speech = tighten_pauses(speech, self.sr)
             rendered.append((speech, pause_ms, voice))
+            job.progress["done"] += 1
+            job.progress["chars_done"] += len(chunk)
+        job.progress["finishing"] = True      # levelling the voices, loudness normalization
         job.result = assemble(rendered, self.sr, Path(out))
         job.done.set()
+
+    def rendering(self):
+        """How far along a render is (for the page), or None when nothing is rendering."""
+        job = self.current
+        if job is not None and job.run == Jarvis.render_file and job.progress and not job.done.is_set():
+            p = job.progress
+            return {"done": p["done"], "total": p["total"], "chars_done": p["chars_done"],
+                    "chars": p["chars"], "finishing": p["finishing"],
+                    "elapsed": round(time.monotonic() - p["started"], 1)}
+        if any(j.run == Jarvis.render_file and not j.cancel.is_set() for j in list(self.jobs.queue)):
+            return {"waiting": True}
+        return None
 
     def play(self, pcm: bytes):
         """Queue audio behind whatever is already playing, starting the player if needed.
@@ -258,9 +281,15 @@ class Jarvis:
         cmd = req.get("cmd")
         if cmd == "ping":
             send_json(conn, {"ok": True, "ready": self.ready.is_set(), "voice": self.voice,
-                             "error": self.error, "speaking": time.monotonic() < self.play_until})
+                             "error": self.error, "speaking": time.monotonic() < self.play_until,
+                             "rendering": self.rendering()})
         elif cmd == "stop":
             self.interrupt()
+            send_json(conn, {"ok": True})
+        elif cmd == "cancel_render":
+            for job in [self.current, *list(self.jobs.queue)]:
+                if job and job.run == Jarvis.render_file:
+                    job.cancel.set()
             send_json(conn, {"ok": True})
         elif cmd == "quit":
             send_json(conn, {"ok": True})
@@ -330,7 +359,9 @@ class Jarvis:
                 job = Job(Jarvis.render_file, text, not req.get("my_breaths"), out)
                 self.jobs.put(job)
                 job.done.wait()
-                send_json(conn, {"ok": job.error is None, "seconds": job.result, "error": job.error})
+                cancelled = job.cancel.is_set()
+                send_json(conn, {"ok": job.error is None and not cancelled, "seconds": job.result,
+                                 "error": "cancelled" if cancelled else job.error})
         else:
             send_json(conn, {"ok": False, "error": f"unknown cmd {cmd!r}"})
 
