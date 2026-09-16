@@ -76,6 +76,12 @@ def wav_stream_header(sample_rate: int) -> bytes:
     )
 
 
+def asked_rate(value) -> float:
+    """Speaking rate from a request: 1.0 unless it's a sensible number. The voice keeps
+    its pitch (index_speak.stretch, as in ./speak --rate); pauses aren't stretched."""
+    return min(max(float(value), 0.5), 2.0) if isinstance(value, (int, float)) else 1.0
+
+
 class Job:
     """One unit of GPU work; `done` is set once it's finished (for a line: once
     playback has ended), `cancel` stops a line between sentences."""
@@ -165,12 +171,12 @@ class Jarvis:
         self.ref_for(voice)
         job.done.set()
 
-    def render_file(self, job: Job, text: str, auto: bool, out: str):
+    def render_file(self, job: Job, text: str, auto: bool, out: str, rate: float = 1.0):
         """Render text to a wav file instead of the speakers — same pacing, voice levelling
         and loudness normalization as ./speak. Stop talking doesn't cancel it; cancel_render
         does (between sentences). Its progress shows in ping's "rendering"."""
         from audio_common import pacing_plan
-        from index_speak import assemble, list_voices, tighten_pauses, trim_edges
+        from index_speak import assemble, list_voices, stretch, tighten_pauses, trim_edges
         plan = pacing_plan(text, auto=auto, voices=set(list_voices()))
         job.progress = {"done": 0, "total": len(plan), "chars_done": 0, "finishing": False,
                         "chars": sum(len(chunk) for chunk, _, _ in plan), "started": time.monotonic()}
@@ -185,6 +191,8 @@ class Jarvis:
                 speech = trim_edges(self.render(chunk, *self.ref_for(voice)), self.sr)
                 if not auto:
                     speech = tighten_pauses(speech, self.sr)
+                if rate != 1.0:
+                    speech = stretch(speech, self.sr, rate)
             rendered.append((speech, pause_ms, voice))
             job.progress["done"] += 1
             job.progress["chars_done"] += len(chunk)
@@ -216,9 +224,9 @@ class Jarvis:
         self.player.stdin.write(pcm)
         self.player.stdin.flush()
 
-    def speak(self, job: Job, text: str, auto: bool, gap_ms: int = LINE_GAP_MS):
+    def speak(self, job: Job, text: str, auto: bool, gap_ms: int = LINE_GAP_MS, rate: float = 1.0):
         from audio_common import pacing_plan
-        from index_speak import list_voices, tighten_pauses, trim_edges
+        from index_speak import list_voices, stretch, tighten_pauses, trim_edges
         plan = pacing_plan(text, auto=auto, voices=set(list_voices()))
         t0 = time.time()
         try:
@@ -235,6 +243,8 @@ class Jarvis:
                     speech = trim_edges(self.render(chunk, *self.ref_for(voice)), self.sr)
                     if not auto:
                         speech = tighten_pauses(speech, self.sr)
+                    if rate != 1.0:
+                        speech = stretch(speech, self.sr, rate)
                     pcm = self.level(voice, speech).tobytes()
                     if job.first_audio is None:
                         job.first_audio = round(time.time() - t0, 2)
@@ -318,7 +328,7 @@ class Jarvis:
                 self.interrupt()
             gap = req.get("gap_ms")
             gap = max(0, min(gap, 5000)) if isinstance(gap, int) else LINE_GAP_MS
-            job = Job(Jarvis.speak, text, not req.get("my_breaths"), gap)
+            job = Job(Jarvis.speak, text, not req.get("my_breaths"), gap, asked_rate(req.get("rate")))
             self.lines[job.id] = job
             for old in list(self.lines)[:-100]:
                 del self.lines[old]
@@ -356,7 +366,8 @@ class Jarvis:
                 send_json(conn, {"ok": False, "error": "render needs text and an output path"})
             else:
                 # Waits its turn on the GPU thread like any line, then replies when the file is done.
-                job = Job(Jarvis.render_file, text, not req.get("my_breaths"), out)
+                job = Job(Jarvis.render_file, text, not req.get("my_breaths"), out,
+                          asked_rate(req.get("rate")))
                 self.jobs.put(job)
                 job.done.wait()
                 cancelled = job.cancel.is_set()

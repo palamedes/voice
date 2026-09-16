@@ -156,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
                    "my_breaths": bool(body.get("my_breaths")), "queue": bool(body.get("queue", True))}
             if isinstance(body.get("gap_ms"), int):
                 msg["gap_ms"] = body["gap_ms"]   # the pause before it, if something is still playing
+            if isinstance(body.get("rate"), (int, float)):
+                msg["rate"] = body["rate"]       # reading pace; the voice keeps its pitch
             resp = jarvis.request(msg, timeout=15)
             self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"})
         elif self.path == "/api/wait":
@@ -195,8 +197,11 @@ class Handler(BaseHTTPRequestHandler):
                 text = f"[{voice}] {text}"   # who reads until a [voice] mark says otherwise
             with tempfile.TemporaryDirectory(prefix="jarvis-render-") as tmp:
                 out = Path(tmp) / "render.wav"
-                resp = jarvis.request({"cmd": "render", "text": text, "out": str(out),
-                                       "my_breaths": bool(body.get("my_breaths"))}, timeout=None)
+                msg = {"cmd": "render", "text": text, "out": str(out),
+                       "my_breaths": bool(body.get("my_breaths"))}
+                if isinstance(body.get("rate"), (int, float)):
+                    msg["rate"] = body["rate"]
+                resp = jarvis.request(msg, timeout=None)
                 if not resp or not resp.get("ok") or not out.exists():
                     return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
                 data = out.read_bytes()

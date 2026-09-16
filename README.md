@@ -232,8 +232,11 @@ While it's reading, either one goes next instead of cutting anything off.
 - **⏸ Pause after ¶N** stops after paragraph N (the one up next, if it's
   already been sent); **■ Stop** (or Esc) stops right away. **▶ Read from ¶N**
   picks up where you left off (the ▸ mark); ⟲ top starts over.
-- A blank line typed inside a paragraph splits it in two; emptying one removes
-  it. **Edit as text** shows the whole article in one box for big changes.
+- **Enter** starts a new paragraph at the caret (at the very start of one, a
+  new empty paragraph above it); **Alt+Enter** adds an empty paragraph right
+  below, wherever the caret is; **Shift+Enter** is a line break inside the
+  paragraph (with only my breaths, a breath). Emptying a paragraph removes it.
+  **Edit as text** shows the whole article in one box for big changes.
 - **One paragraph in another voice:** hover it and click the name under ¶N on
   the left, then pick a voice ("Article reader" undoes it). It applies to that
   paragraph only, and the name stays showing in green. Copy text and Render out
@@ -241,7 +244,10 @@ While it's reading, either one goes next instead of cutting anything off.
   `[voice]` switch typed into the text carries on into the following paragraphs
   until the next switch, as it does in `./speak`. (Edit as text shows only the
   words: a paragraph you change there goes back to the article's reader.)
-- **Only my breaths** is `--my-breaths`.
+- **Only my breaths** is `--my-breaths`. **Pace** reads faster or slower (0.7×
+  to 1.3×) without changing the voice's pitch, and your pauses keep the length
+  you gave them — the same as `./speak --rate`. Click the number to go back to
+  1.00×. It applies to reading and to Render out.
 - **Copy text** copies the article, marks and all, to paste back into the post;
   **⬇ Render out** downloads the whole article as a `.wav`, read the same way.
 - The article is kept in this browser (not in a file) until you press Clear.

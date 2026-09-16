@@ -119,6 +119,9 @@
   .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
   .reader-pick { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--muted); }
   .reader-pick select { width: auto; max-width: 15rem; }
+  .pace { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--muted); }
+  .pace input[type="range"] { width: 7rem; padding: 0; background: transparent; border: none; }
+  #pace-value { min-width: 3.8rem; }
   #raw { flex: 1; margin: .6rem 0; resize: none; line-height: 1.55; }
   #paras { flex: 1; overflow: auto; margin: .6rem 0; padding: .3rem 0;
            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -146,6 +149,7 @@
   .para .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1.02rem; line-height: 1.6;
                 padding: .15rem .4rem; border-radius: 6px; outline: none; cursor: text; }
   .para .text:focus { background: var(--field); box-shadow: 0 0 0 1px var(--line); }
+  .para .text { min-height: 1.9em; }   /* a new, empty paragraph still has room to click */
   .para.current { background: #1b2540; border-left-color: var(--accent); }
   .para.current .num { color: var(--accent); }
   .para.next, .para.sent { border-left-color: var(--warn); }
@@ -238,6 +242,10 @@
       <button id="read-stop" type="button" title="Stop now (Esc)" disabled>■ Stop</button>
       <label class="check" title="Pause only at your ,,, / [breath] / [pause] marks and line breaks">
         <input id="my-breaths" type="checkbox"> only my breaths</label>
+      <label class="pace" title="How fast it reads. The voice keeps its pitch and your pauses keep their length.">
+        Pace <input id="pace" type="range" min="0.7" max="1.3" step="0.05" value="1" aria-label="Reading pace">
+      </label>
+      <button id="pace-value" type="button" class="small" title="Back to normal speed">1.00×</button>
       <span class="spacer"></span>
       <button id="edit-all" type="button" class="small">Edit as text</button>
       <button id="article-copy" type="button" class="small">Copy text</button>
@@ -249,7 +257,8 @@
     <div id="paras" aria-label="Article paragraphs"></div>
     <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
       ▶ read on from here · ⟳ play just this one (Ctrl+Enter); while it's reading, either one goes next.
-      A blank line splits a paragraph. The name under ¶ picks who reads that one paragraph;
+      Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one.
+      The name under ¶ picks who reads that one paragraph;
       a [voice] switch typed in the text carries on until the next one.</div>
   </section>
 </main>
@@ -295,7 +304,8 @@ if (saved.v !== VERSION) saved.autospeak = false;   // "speak as I add" now star
 const state = Object.assign(
   { panel: [], left: "", right: "", lines: [], side: "left", autospeak: false,
     name: "", convId: "", savedSnap: "", mode: "scene" }, saved, { v: VERSION });
-state.article = Object.assign({ paras: [], voice: "", myBreaths: false, resumeId: 0 }, state.article);
+state.article = Object.assign({ paras: [], voice: "", myBreaths: false, resumeId: 0, rate: 1 }, state.article);
+state.article.rate = Number(state.article.rate) || 1;
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
 }
@@ -945,6 +955,19 @@ const myBreaths = $("#my-breaths");
 myBreaths.checked = article.myBreaths;
 myBreaths.addEventListener("change", () => { article.myBreaths = myBreaths.checked; save(); });
 
+// Pace: how fast Jarvis reads, without changing the voice's pitch (./speak --rate).
+const pace = $("#pace");
+const showPace = () => { $("#pace-value").textContent = `${article.rate.toFixed(2)}×`; };
+pace.value = String(article.rate);
+showPace();
+pace.addEventListener("input", () => { article.rate = Number(pace.value); showPace(); saveSoon(); });
+$("#pace-value").addEventListener("click", () => {
+  article.rate = 1;
+  pace.value = "1";
+  showPace();
+  save();
+});
+
 function paraNode(para) {
   const id = para.id;
   if (paraNodes.has(id)) return paraNodes.get(id).row;
@@ -959,8 +982,13 @@ function paraNode(para) {
     }
   });
   text.addEventListener("blur", () => commitParagraph(id));
+  // Enter: split into a new paragraph at the caret. Alt+Enter: a new empty paragraph below.
+  // Shift+Enter: a line break inside this one. Ctrl+Enter: play it.
   text.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitParagraph(id); read(id, true); }
+    if (e.key !== "Enter" || e.isComposing) return;
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); commitParagraph(id); read(id, true); }
+    else if (e.altKey) { e.preventDefault(); addParagraphAfter(id); }
+    else if (!e.shiftKey) { e.preventDefault(); splitAtCaret(id); }
   });
   const tool = (label, title, action) =>
     el("button", { type: "button", title, "aria-label": title, onclick: action }, label);
@@ -984,6 +1012,68 @@ function paraNode(para) {
   ]);
   paraNodes.set(id, { row, text, num, chip, name, pick });
   return row;
+}
+
+// How far into this paragraph's text the caret is. (Editing leaves text and <br>s, so
+// measure a rendered copy of everything before the caret, as innerText sees it.)
+function caretOffset(root) {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !root.contains(selection.focusNode)) return null;
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.setEnd(selection.focusNode, selection.focusOffset);
+  const probe = el("div", { style: "position:absolute;left:-9999px;white-space:pre-wrap" });
+  probe.append(range.cloneContents());
+  document.body.append(probe);
+  const offset = probe.innerText.length;
+  probe.remove();
+  return offset;
+}
+
+// Enter: the text from the caret on becomes a new paragraph (with the same reader), and
+// the caret moves there. At the very start of a paragraph: a new empty one above it.
+function splitAtCaret(id) {
+  const index = paraIndex(id);
+  const node = paraNodes.get(id);
+  if (index < 0 || !node) return;
+  const para = article.paras[index];
+  const full = node.text.innerText.replace(/\r\n?/g, "\n");
+  const at = Math.min(caretOffset(node.text) ?? full.length, full.length);
+  const before = full.slice(0, at).replace(/\s+$/, "");
+  const fresh = { ...newPara(before ? full.slice(at).replace(/^\s+/, "") : ""),
+                  ...(para.voice ? { voice: para.voice } : {}) };
+  if (before) {
+    para.text = before;
+    node.text.textContent = before;
+    article.paras.splice(index + 1, 0, fresh);
+  } else {
+    article.paras.splice(index, 0, fresh);
+  }
+  save();
+  renderArticle();
+  focusParagraph(fresh.id);
+}
+
+// Alt+Enter: a new empty paragraph right after this one, wherever the caret is.
+function addParagraphAfter(id) {
+  const index = paraIndex(id);
+  if (index < 0) return;
+  const para = article.paras[index];
+  const fresh = { ...newPara(""), ...(para.voice ? { voice: para.voice } : {}) };
+  article.paras.splice(index + 1, 0, fresh);
+  save();
+  renderArticle();
+  focusParagraph(fresh.id);
+}
+
+function focusParagraph(id) {
+  const target = paraNodes.get(id).text;
+  target.focus();
+  const caret = document.createRange();
+  caret.setStart(target, 0);
+  caret.collapse(true);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(caret);
 }
 
 // Leaving a paragraph tidies it: a blank line splits it in two, emptying it removes it.
@@ -1136,7 +1226,7 @@ async function sendFrom(id, once) {
     const para = article.paras[index];
     const reply = !para.text.trim() ? { skipped: true } : await api("/api/say", {
       voice: voiceAt(index), text: para.text, markdown: true, my_breaths: article.myBreaths,
-      queue: true, gap_ms: article.myBreaths ? 800 : 900 }).catch(() => OFFLINE);
+      queue: true, gap_ms: article.myBreaths ? 800 : 900, rate: article.rate }).catch(() => OFFLINE);
     if (reply.skipped) {
       reader.read.add(para.id);
       if (once) return null;
@@ -1305,8 +1395,8 @@ $("#article-render").addEventListener("click", () => {
   if (!article.voice) return toast("Pick who reads it first");
   if (!ready) return toast("Start Jarvis first (top left)");
   const title = article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60);
-  renderWav($("#article-render"), { text: articleScript(),
-                                    voice: article.voice, markdown: true, my_breaths: article.myBreaths,
+  renderWav($("#article-render"), { text: articleScript(), voice: article.voice, markdown: true,
+                                    my_breaths: article.myBreaths, rate: article.rate,
                                     name: title || "article" });
 });
 

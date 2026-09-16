@@ -186,10 +186,18 @@ def tighten_pauses(audio, sr, max_ms=INNER_PAUSE_MS, floor_db=-40):
 
 
 def stretch(audio, sr, rate):
-    """Change speaking rate without changing pitch (ffmpeg's rubberband filter)."""
+    """Change speaking rate without changing pitch (ffmpeg's atempo, which snips and
+    overlaps short pieces). Rubberband's phase vocoder was tried first and smeared
+    speech into a faint echo. atempo takes 0.5-2x a step, so bigger changes chain."""
+    steps, left = [], float(rate)
+    while left > 2.0 or left < 0.5:
+        step = 2.0 if left > 2.0 else 0.5
+        steps.append(step)
+        left /= step
+    steps.append(left)
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le", "-ar", str(sr), "-ac", "1",
-         "-i", "-", "-af", f"rubberband=tempo={rate}", "-f", "s16le", "-"],
+         "-i", "-", "-af", ",".join(f"atempo={s:.6f}" for s in steps), "-f", "s16le", "-"],
         input=audio.tobytes(), capture_output=True, check=True).stdout
     return np.frombuffer(out, dtype=np.int16)
 
