@@ -116,6 +116,22 @@
   .chip .chip-tool:hover { color: var(--text); }
 
   /* article */
+  .docs { display: flex; align-items: center; gap: .4rem; margin-bottom: .6rem; }
+  .doc-tabs { display: flex; gap: .3rem; overflow-x: auto; flex: 1; }
+  .doc { display: inline-flex; align-items: center; border: 1px solid var(--line);
+         border-radius: 8px; background: var(--card); max-width: 14rem; flex: none; }
+  .doc.on { border-color: var(--accent); background: #1b2540; }
+  .doc button { background: transparent; border: none; padding: .2rem .5rem; font-size: .85rem; }
+  .doc .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc .doc-close { color: var(--muted); padding: .2rem .35rem; }
+  .doc .doc-close:hover { color: var(--text); }
+  .pickmenu { position: relative; display: inline-flex; align-items: center; flex: none;
+              border: 1px solid var(--line); border-radius: 8px; padding: .2rem .5rem;
+              font-size: .85rem; color: var(--muted); cursor: pointer; }
+  .pickmenu:hover { border-color: var(--accent); }
+  .pickmenu select { position: absolute; inset: 0; width: 100%; padding: 0; border: none;
+                     opacity: 0; cursor: pointer; }
+  .doc-title { width: 11rem; font-weight: 600; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
   .reader-pick { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--muted); }
   .reader-pick select { width: auto; max-width: 15rem; }
@@ -235,7 +251,14 @@
 
   <section id="article" hidden>
     <h2>Article</h2>
+    <div class="docs">
+      <div id="doc-tabs" class="doc-tabs" role="tablist" aria-label="Open articles"></div>
+      <button id="doc-new" type="button" class="small" title="Start another article">＋</button>
+      <label class="pickmenu" title="Open an article saved in articles/">Open ▾
+        <select id="doc-open" aria-label="Open a saved article"></select></label>
+    </div>
     <div class="toolbar">
+      <input id="article-name" class="doc-title" placeholder="Untitled" aria-label="Article name">
       <label class="reader-pick">Read by <select id="reader"></select></label>
       <button id="read" type="button">▶ Read</button>
       <button id="read-top" type="button" class="small" title="Next ▶ Read starts from the top" hidden>⟲ top</button>
@@ -251,7 +274,7 @@
       <button id="article-copy" type="button" class="small">Copy text</button>
       <button id="article-save" type="button" class="small" title="Save the article to posts/ as Markdown">💾 Save post</button>
       <button id="article-render" type="button" class="small" title="Render the whole article to a .wav in output/">⬇ Render out</button>
-      <button id="article-clear" type="button" class="small">Clear</button>
+      <button id="article-delete" type="button" class="small" title="Delete this article and its file">Delete</button>
     </div>
     <textarea id="raw" aria-label="Article text"
       placeholder="Paste an article here (Markdown is fine). Blank lines separate the paragraphs."></textarea>
@@ -305,8 +328,6 @@ if (saved.v !== VERSION) saved.autospeak = false;   // "speak as I add" now star
 const state = Object.assign(
   { panel: [], left: "", right: "", lines: [], side: "left", autospeak: false,
     name: "", convId: "", savedSnap: "", mode: "scene" }, saved, { v: VERSION });
-state.article = Object.assign({ paras: [], voice: "", myBreaths: false, resumeId: 0, rate: 1 }, state.article);
-state.article.rate = Number(state.article.rate) || 1;
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
 }
@@ -397,7 +418,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") stopReading();
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
     e.preventDefault();
-    if (state.mode === "article") toast("The article is kept in this browser; Copy text takes it back to your post");
+    if (state.mode === "article") $("#article-save").click();   // Save post
     else saveConversation();
   }
 });
@@ -422,7 +443,7 @@ function renderVoices() {
   list.setAttribute("aria-label", reading ? "Who reads the article" : "Voices");
   list.replaceChildren(...shown.map((voice) => {
     if (reading) {
-      const on = voice === state.article.voice;
+      const on = voice === article.voice;
       return el("li", { role: "none" }, el("button", {
         type: "button", class: "vpick", role: "radio", "aria-checked": String(on),
         title: on ? "Reading the article" : "Have this voice read the article", onclick: () => setReader(voice),
@@ -885,19 +906,38 @@ const autospeak = $("#autospeak");
 autospeak.checked = state.autospeak;
 autospeak.addEventListener("change", () => { state.autospeak = autospeak.checked; save(); });
 
-// ---- article: paste an article, pick who reads it, follow along paragraph by paragraph ----
-// Each paragraph goes to Jarvis only when its turn comes, so edits further down are
-// picked up live. Paragraphs keep ids, so edits and splits don't lose the reader's place.
-const article = state.article;
+// ---- articles: several open at once, each one its own document ----------------------------
+// Each paragraph goes to Jarvis only when its turn comes, so edits further down are picked
+// up live. Paragraphs keep ids, so edits and splits don't lose the reader's place. The open
+// articles show as tabs; each is also a file in articles/, written as you type.
 const VOICE_MARK = /\[([\w.-]+)\]/g;
-article.paras = (Array.isArray(article.paras) ? article.paras : [])
-  .filter((p) => p && typeof p.text === "string" && p.text.trim());
-let paraSeq = article.paras.reduce((top, p) => Math.max(top, Number(p.id) || 0), 0);
-for (const p of article.paras) if (!p.id) p.id = ++paraSeq;
+let paraSeq = 0;
+let docSeq = 0;
+
+function cleanDoc(doc) {
+  const tidy = Object.assign({ name: "", paras: [], voice: "", myBreaths: false, resumeId: 0,
+                               rate: 1, fileId: "" }, doc);
+  tidy.id = ++docSeq;
+  tidy.name = String(tidy.name || "");
+  tidy.rate = Number(tidy.rate) || 1;
+  tidy.paras = (Array.isArray(tidy.paras) ? tidy.paras : [])
+    .filter((p) => p && typeof p.text === "string")
+    .map((p) => ({ ...p, id: ++paraSeq }));
+  return tidy;
+}
+
+// The single article older versions kept becomes the first tab.
+if (state.article) { state.articles = [...(state.articles || []), state.article]; delete state.article; }
+state.articles = (Array.isArray(state.articles) ? state.articles : []).map(cleanDoc);
+if (!state.articles.length) state.articles = [cleanDoc({})];
+let article = state.articles.find((d) => d.id === state.articleId) || state.articles[0];
+state.articleId = article.id;
+
 const newPara = (text) => ({ id: ++paraSeq, text });
-const paraIndex = (id) => article.paras.findIndex((p) => p.id === id);
+const paraIndexIn = (doc, id) => doc.paras.findIndex((p) => p.id === id);
+const paraIndex = (id) => paraIndexIn(article, id);
 const paraNodes = new Map();     // paragraph id -> its elements, reused across renders
-const reader = { active: false, run: 0, currentId: 0, next: null, pauseAfter: false,
+const reader = { doc: null, active: false, run: 0, currentId: 0, next: null, pauseAfter: false,
                  sentId: 0, warned: new Set(), read: new Set(), stopping: null };
 let rawMode = !article.paras.length;
 let saveTimer;
@@ -924,7 +964,136 @@ function splitParagraphs(text) {
   return parts.map((part) => part.trim()).filter(Boolean);
 }
 
+// ---- the open articles: tabs, and a file each in articles/ --------------------------------
+let savedDocs = [];               // what's in articles/ on this machine
+const docSaved = new Map();       // article id -> the JSON last written to its file
+const docTitle = (doc) => (doc.name || (doc.paras.length
+  ? doc.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : ""));
+const docData = (doc) => ({ name: doc.name, voice: doc.voice, myBreaths: doc.myBreaths, rate: doc.rate,
+                            paras: doc.paras.map((p) => (p.voice ? { text: p.text, voice: p.voice }
+                                                                 : { text: p.text })) });
+
+function renderDocs() {
+  $("#doc-tabs").replaceChildren(...state.articles.map((doc) => {
+    const on = doc.id === article.id;
+    const label = docTitle(doc) || "Untitled";
+    return el("div", { class: "doc" + (on ? " on" : ""), role: "none" }, [
+      el("button", { type: "button", class: "doc-name", role: "tab", "aria-selected": String(on),
+                     title: label, onclick: () => openArticle(doc.id) },
+         label + (reader.active && reader.doc === doc ? " ▶" : "")),
+      el("button", { type: "button", class: "doc-close", title: "Close this tab (its file stays)",
+                     "aria-label": `Close ${label}`, onclick: () => closeArticle(doc.id) }, "×"),
+    ]);
+  }));
+  const open = $("#doc-open");
+  const key = JSON.stringify(savedDocs);
+  if (open.dataset.key !== key) {
+    open.replaceChildren(el("option", { value: "" }, "Open ▾"),
+      ...savedDocs.map((d) => el("option", { value: d.id }, `${d.name} · ${d.paragraphs} ¶`)));
+    open.dataset.key = key;
+  }
+  open.value = "";
+}
+
+function openArticle(id) {
+  const doc = state.articles.find((d) => d.id === id);
+  if (!doc || doc === article) { renderDocs(); return; }
+  article = doc;
+  state.articleId = doc.id;
+  rawMode = !article.paras.length;
+  paraNodes.clear();
+  $("#paras").replaceChildren();
+  $("#raw").value = "";
+  $("#article-name").value = article.name;
+  $("#my-breaths").checked = article.myBreaths;
+  $("#pace").value = String(article.rate);
+  showPace();
+  save();
+  renderReader();
+  renderVoices();
+  renderArticle();
+  renderDocs();
+}
+
+function newArticle() {
+  const doc = cleanDoc({});
+  state.articles.push(doc);
+  openArticle(doc.id);
+  $("#raw").focus();
+}
+
+function closeArticle(id) {
+  const doc = state.articles.find((d) => d.id === id);
+  if (!doc) return;
+  if (reader.active && reader.doc === doc) stopReading();
+  syncArticles();                        // its file catches up before the tab goes
+  state.articles = state.articles.filter((d) => d !== doc);
+  if (!state.articles.length) state.articles = [cleanDoc({})];
+  docSaved.delete(doc.id);
+  save();
+  if (article === doc) openArticle(state.articles[0].id);
+  else renderDocs();
+}
+
+async function loadArticleList() {
+  try { savedDocs = (await api("/api/articles")).articles; } catch { savedDocs = []; }
+  renderDocs();
+}
+
+async function openSaved(fileId) {
+  const already = state.articles.find((d) => d.fileId === fileId);
+  if (already) return openArticle(already.id);
+  const reply = await api("/api/articles/load", { id: fileId }).catch(() => ({}));
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't open it");
+  const doc = cleanDoc({ ...reply.article, fileId });
+  state.articles.push(doc);
+  docSaved.set(doc.id, JSON.stringify(docData(doc)));
+  openArticle(doc.id);
+}
+
+// Every open article with something in it is a file in articles/, kept up to date as you type.
+async function syncArticles() {
+  for (const doc of state.articles) {
+    const json = JSON.stringify(docData(doc));
+    if (!doc.paras.length || !docTitle(doc) || docSaved.get(doc.id) === json) continue;
+    docSaved.set(doc.id, json);
+    const reply = await api("/api/articles/save", { id: doc.fileId, name: docTitle(doc), article: docData(doc) })
+      .catch(() => ({}));
+    if (!reply.ok) { docSaved.delete(doc.id); continue; }   // try again on the next round
+    if (doc.fileId !== reply.id) {
+      doc.fileId = reply.id;
+      save();
+      loadArticleList();
+    }
+  }
+}
+
+async function deleteArticle() {
+  const label = docTitle(article) || "Untitled";
+  if (!confirm(`Delete "${label}"? Its file in articles/ goes too.`)) return;
+  if (reader.active && reader.doc === article) stopReading();
+  if (article.fileId) await api("/api/articles/delete", { id: article.fileId }).catch(() => {});
+  const gone = article;
+  state.articles = state.articles.filter((d) => d !== gone);
+  if (!state.articles.length) state.articles = [cleanDoc({})];
+  docSaved.delete(gone.id);
+  save();
+  openArticle(state.articles[0].id);
+  loadArticleList();
+  toast(`Deleted "${label}"`);
+}
+
+$("#doc-new").addEventListener("click", newArticle);
+$("#doc-open").addEventListener("change", (e) => { if (e.target.value) openSaved(e.target.value); });
+$("#article-delete").addEventListener("click", deleteArticle);
+$("#article-name").addEventListener("input", () => {
+  article.name = $("#article-name").value.trim();
+  saveSoon();
+  renderDocs();
+});
+
 function renderReader() {
+  $("#article-name").value = article.name;
   const choices = [...new Set([...voices, ...(article.voice ? [article.voice] : [])])];
   $("#reader").replaceChildren(el("option", { value: "" }, "— pick a voice —"), ...choices.map((voice) => {
     const name = labelFor(voice);
@@ -1105,6 +1274,7 @@ function renderArticle() {
 // Highlights and labels only; cheap enough to run on every step of the reader.
 function paintArticle() {
   const known = new Set(voices);
+  const reading = reader.active && reader.doc === article;   // another tab may be the one reading
   let carried = article.voice;          // the reader, or the last [voice] switch typed so far
   article.paras.forEach((para, i) => {
     const node = paraNodes.get(para.id);
@@ -1112,22 +1282,22 @@ function paintArticle() {
     node.num.textContent = "¶" + (i + 1);
     paintParaVoice(node, para, para.voice || carried);
     for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) carried = mark[1];
-    node.row.classList.toggle("current", para.id === reader.currentId);
+    node.row.classList.toggle("current", reading && para.id === reader.currentId);
     node.row.classList.toggle("read", reader.read.has(para.id));
-    node.row.classList.toggle("next", Boolean(reader.next && reader.next.id === para.id));
-    node.row.classList.toggle("sent", reader.active && para.id === reader.sentId);
-    node.row.classList.toggle("resume", !reader.active && para.id === article.resumeId);
+    node.row.classList.toggle("next", Boolean(reading && reader.next && reader.next.id === para.id));
+    node.row.classList.toggle("sent", reading && para.id === reader.sentId);
+    node.row.classList.toggle("resume", !reading && para.id === article.resumeId);
     if (document.activeElement !== node.text && node.text.textContent !== para.text) {
       node.text.textContent = para.text;
     }
   });
   const start = paraIndex(article.resumeId);
-  const pauseAt = paraIndex(reader.sentId || reader.currentId);   // the last one Jarvis has
-  $("#read").textContent = reader.active
+  const pauseAt = reading ? paraIndex(reader.sentId || reader.currentId) : -1;   // the last one Jarvis has
+  $("#read").textContent = reading
     ? reader.pauseAfter ? "▶ Keep going" : pauseAt >= 0 ? `⏸ Pause after ¶${pauseAt + 1}` : "⏸ Pause after this ¶"
     : start > 0 ? `▶ Read from ¶${start + 1}` : "▶ Read";
   $("#read-stop").disabled = !reader.active;
-  $("#read-top").hidden = reader.active || start <= 0;
+  $("#read-top").hidden = reading || start <= 0;
 }
 
 // The name under ¶N: who reads this paragraph, and a menu to change it for this one only.
@@ -1166,14 +1336,15 @@ function setParaVoice(id, voice) {
 // Who reads paragraph `index` from its start: its own reader if you picked one, else the
 // article's reader or the last [voice] switch typed before it (a typed switch carries on,
 // as in ./speak; a paragraph's own reader doesn't).
-function voiceAt(index) {
+function voiceAtIn(doc, index) {
   const known = new Set(voices);
-  let voice = article.voice;
-  for (const para of article.paras.slice(0, index)) {
+  let voice = doc.voice;
+  for (const para of doc.paras.slice(0, index)) {
     for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
   }
-  return article.paras[index].voice || voice;
+  return doc.paras[index].voice || voice;
 }
+const voiceAt = (index) => voiceAtIn(article, index);
 
 // The article as one text, with a [voice] switch wherever a paragraph starts in a voice
 // other than the one reading just before it: what Render out and Copy text use, so the
@@ -1193,6 +1364,7 @@ function articleScript() {
 }
 
 function follow(id) {
+  if (reader.doc !== article) return;        // it's reading another tab
   const node = paraNodes.get(id);
   const editing = document.activeElement && document.activeElement.closest("#paras, #raw");
   if (node && !editing && !rawMode) node.row.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1213,12 +1385,12 @@ let lead = 4;   // seconds before the end to send the next one; follows how fast
 
 // Send paragraph `id`, or the first one from there with something to say (one that's only
 // Markdown, like a --- rule, is passed over). null at the end of the article.
-async function sendFrom(id, once) {
-  for (let index = paraIndex(id); index >= 0 && index < article.paras.length; index++) {
-    const para = article.paras[index];
+async function sendFrom(doc, id, once) {
+  for (let index = paraIndexIn(doc, id); index >= 0 && index < doc.paras.length; index++) {
+    const para = doc.paras[index];
     const reply = !para.text.trim() ? { skipped: true } : await api("/api/say", {
-      voice: voiceAt(index), text: para.text, markdown: true, my_breaths: article.myBreaths,
-      queue: true, gap_ms: article.myBreaths ? 800 : 900, rate: article.rate }).catch(() => OFFLINE);
+      voice: voiceAtIn(doc, index), text: para.text, markdown: true, my_breaths: doc.myBreaths,
+      queue: true, gap_ms: doc.myBreaths ? 800 : 900, rate: doc.rate }).catch(() => OFFLINE);
     if (reply.skipped) {
       reader.read.add(para.id);
       if (once) return null;
@@ -1231,26 +1403,29 @@ async function sendFrom(id, once) {
 }
 
 // The paragraph after `cur`, even if edits moved or removed it meanwhile.
-function following(cur) {
-  const at = paraIndex(cur.para);
-  return article.paras[at >= 0 ? at + 1 : cur.index];
+function following(doc, cur) {
+  const at = paraIndexIn(doc, cur.para);
+  return doc.paras[at >= 0 ? at + 1 : cur.index];
 }
 
 // What reads after `cur`: a paragraph you asked for (▶ / ⟳ while reading), else the next
 // one, unless `cur` was a single paragraph or you asked to pause.
-function sendNext(cur) {
+function sendNext(doc, cur) {
   if (reader.next) {
     const { id, once } = reader.next;
     reader.next = null;
-    return sendFrom(id, once);
+    return sendFrom(doc, id, once);
   }
-  const after = following(cur);
-  return cur.once || reader.pauseAfter || !after ? null : sendFrom(after.id, false);
+  const after = following(doc, cur);
+  return cur.once || reader.pauseAfter || !after ? null : sendFrom(doc, after.id, false);
 }
 
 // Read from paragraph `fromId` to the end (or just that one). While reading, this never
 // cuts off anything: the request goes next instead.
 async function read(fromId, once = false) {
+  if (reader.active && reader.doc !== article) {
+    return toast(`Jarvis is reading “${docTitle(reader.doc) || "another tab"}” — stop that first`);
+  }
   if (reader.active) {
     Object.assign(reader, { next: { id: fromId, once }, pauseAfter: false });
     paintArticle();
@@ -1260,15 +1435,17 @@ async function read(fromId, once = false) {
   }
   if (!article.voice) return toast("Pick who reads it first");
   if (!ready) return toast("Start Jarvis first (top left)");
+  const doc = article;            // it keeps reading this one, even if you switch tabs
   const run = ++reader.run;
-  Object.assign(reader, { active: true, next: null, pauseAfter: false, sentId: 0, warned: new Set() });
+  Object.assign(reader, { doc, active: true, next: null, pauseAfter: false, sentId: 0, warned: new Set() });
   paintArticle();
+  renderDocs();
   await reader.stopping;          // a Stop still on its way mustn't catch the new start
   try {
-    let cur = run === reader.run ? await sendFrom(fromId, once) : null;
+    let cur = run === reader.run ? await sendFrom(doc, fromId, once) : null;
     while (cur && run === reader.run) {
       Object.assign(reader, { currentId: cur.para, sentId: 0 });
-      if (!cur.once) article.resumeId = cur.para;
+      if (!cur.once) doc.resumeId = cur.para;
       paintArticle();
       follow(cur.para);
       // Follow it until it has been heard; near its end, send whatever comes next.
@@ -1284,7 +1461,7 @@ async function read(fromId, once = false) {
         if (status.stopped) { stopped = true; break; }
         closing = closing || status.done || (status.ends_in != null && status.ends_in <= lead);
         if (closing && !next) {
-          next = await sendNext(cur);
+          next = await sendNext(doc, cur);
           if (run !== reader.run) return;
           reader.sentId = next ? next.para : 0;
           paintArticle();
@@ -1294,8 +1471,8 @@ async function read(fromId, once = false) {
       if (stopped) break;
       reader.read.add(cur.para);
       if (!cur.once) {
-        const after = following(cur);
-        article.resumeId = after ? after.id : 0;
+        const after = following(doc, cur);
+        doc.resumeId = after ? after.id : 0;
       }
       cur = next;
     }
@@ -1303,24 +1480,26 @@ async function read(fromId, once = false) {
     if (run === reader.run) toast(error.message);
   } finally {
     if (run === reader.run) {
-      Object.assign(reader, { active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
+      Object.assign(reader, { doc: null, active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
     }
     save();
     paintArticle();
+    renderDocs();
   }
 }
 
 function stopReading() {
   if (reader.active) {
     reader.run++;
-    Object.assign(reader, { active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
+    Object.assign(reader, { doc: null, active: false, currentId: 0, next: null, pauseAfter: false, sentId: 0 });
     paintArticle();
+    renderDocs();
   }
   reader.stopping = api("/api/stop", {}).catch(() => {});
 }
 
 $("#read").addEventListener("click", () => {
-  if (reader.active) {
+  if (reader.active && reader.doc === article) {
     reader.pauseAfter = !reader.pauseAfter;
     const queued = paraIndex(reader.sentId);
     if (reader.pauseAfter && queued >= 0) toast(`Pausing after ¶${queued + 1}: it's already on its way`);
@@ -1357,19 +1536,6 @@ $("#raw").addEventListener("paste", () => {
   if (!$("#raw").value.trim()) setTimeout(() => setRaw(false), 0);   // just paste and go
 });
 
-$("#article-clear").addEventListener("click", () => {
-  if (article.paras.length && !confirm("Clear the article? Copy text first if you want to keep your edits.")) return;
-  if (reader.active) stopReading();
-  article.paras = [];
-  article.resumeId = 0;
-  reader.read.clear();
-  $("#raw").value = "";
-  rawMode = true;
-  save();
-  renderArticle();
-  $("#raw").focus();
-});
-
 $("#article-copy").addEventListener("click", async () => {
   const text = rawMode ? $("#raw").value : articleScript();
   if (!text.trim()) return toast("Nothing to copy yet");
@@ -1381,9 +1547,8 @@ $("#article-copy").addEventListener("click", async () => {
   }
 });
 
-// The article's first line, for naming the files it's saved or rendered into.
-const articleTitle = () => (article.paras.length
-  ? article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : "");
+// Its name, or its first line: what the files it's saved or rendered into are called.
+const articleTitle = () => docTitle(article);
 
 $("#article-render").addEventListener("click", () => {
   if (rawMode) setRaw(false);
@@ -1412,6 +1577,7 @@ function render() {
   renderSaved();
   renderReader();
   renderArticle();
+  renderDocs();
 }
 
 save();
@@ -1419,8 +1585,10 @@ setMode(state.mode);
 render();
 loadVoices();
 loadSavedList();
+loadArticleList();
 refreshStatus();
 setInterval(refreshStatus, 2000);
+setInterval(syncArticles, 3000);   // the open articles keep their files up to date
 </script>
 </body>
 </html>

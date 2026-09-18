@@ -36,6 +36,8 @@ CONVERSATIONS = ROOT / "conversations"
 OUTPUT = Path(os.environ.get("JARVIS_OUTPUT") or ROOT / "output")
 # Save post writes the article here as Markdown (JARVIS_POSTS moves it).
 POSTS = Path(os.environ.get("JARVIS_POSTS") or ROOT / "posts")
+# The articles open on the page: one JSON each, saved as you type (JARVIS_ARTICLES moves it).
+ARTICLES = Path(os.environ.get("JARVIS_ARTICLES") or ROOT / "articles")
 
 
 def slug(name: str) -> str:
@@ -58,6 +60,31 @@ def conversation_path(cid: str) -> Path | None:
     if not cid or "/" in cid or "\\" in cid or cid.startswith(".") or path.parent != CONVERSATIONS:
         return None
     return path
+
+
+def article_path(aid: str) -> Path | None:
+    """articles/<id>.json, or None if the id could point outside that folder."""
+    path = ARTICLES / f"{aid}.json"
+    if not aid or "/" in aid or "\\" in aid or aid.startswith(".") or path.parent != ARTICLES:
+        return None
+    return path
+
+
+def clean_article(name: str, doc: dict) -> dict:
+    """Keep only the fields the page uses, with sane types (files may be hand-edited)."""
+    paras = []
+    for para in doc.get("paras") or []:
+        if not isinstance(para, dict) or not str(para.get("text", "")).strip():
+            continue
+        kept = {"text": str(para["text"]).strip()}
+        if para.get("voice"):
+            kept["voice"] = str(para["voice"])
+        paras.append(kept)
+    rate = doc.get("rate")
+    return {"name": name, "voice": str(doc.get("voice") or ""),
+            "myBreaths": bool(doc.get("myBreaths")),
+            "rate": min(max(float(rate), 0.5), 2.0) if isinstance(rate, (int, float)) else 1.0,
+            "paras": paras}
 
 
 def clean_conversation(name: str, conv: dict) -> dict:
@@ -131,6 +158,17 @@ class Handler(BaseHTTPRequestHandler):
                               "lines": len(data.get("lines") or [])})
             found.sort(key=lambda c: c["name"].casefold())
             self.send_json({"conversations": found})
+        elif self.path == "/api/articles":
+            found = []
+            for f in ARTICLES.glob("*.json"):
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue    # a half-written or hand-broken file; load reports it
+                found.append({"id": f.stem, "name": str(data.get("name") or f.stem),
+                              "paragraphs": len(data.get("paras") or [])})
+            found.sort(key=lambda a: a["name"].casefold())
+            self.send_json({"articles": found})
         else:
             self.send_json({"ok": False, "error": "not found"}, 404)
 
@@ -230,6 +268,31 @@ class Handler(BaseHTTPRequestHandler):
             path.write_text(text + "\n", encoding="utf-8")
             shown = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
             self.send_json({"ok": True, "file": str(shown)})
+        elif self.path == "/api/articles/save":
+            name = str(body.get("name") or "").strip()
+            # Keeps the file it already has; renaming changes the name inside it, not the file.
+            path = article_path(str(body.get("id") or "") or slug(name))
+            if not name or not path:
+                return self.send_json({"ok": False, "error": "needs a name"}, 400)
+            doc = body.get("article")
+            data = clean_article(name, doc if isinstance(doc, dict) else {})
+            ARTICLES.mkdir(exist_ok=True)
+            path.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+            self.send_json({"ok": True, "id": path.stem})
+        elif self.path in ("/api/articles/load", "/api/articles/delete"):
+            path = article_path(str(body.get("id") or ""))
+            if not path:
+                return self.send_json({"ok": False, "error": "bad article id"}, 400)
+            if self.path.endswith("/delete"):
+                path.unlink(missing_ok=True)
+                return self.send_json({"ok": True})
+            if not path.exists():
+                return self.send_json({"ok": False, "error": "that article isn't saved"}, 404)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                return self.send_json({"ok": False, "error": f"can't read {path.name} (broken JSON?)"}, 422)
+            self.send_json({"ok": True, "article": clean_article(str(data.get("name") or path.stem), data)})
         elif self.path == "/api/conversations/save":
             name = str(body.get("name") or "").strip()
             # Re-saving what's loaded keeps its file; a new name gets a new one.

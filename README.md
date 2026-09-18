@@ -211,7 +211,16 @@ that side):
 
 #### The Article view: tune how an article reads, live
 
-**Article** (top right) swaps the panel and conversation for an editor. Paste an
+**Article** (top right) swaps the panel and conversation for an editor. You can
+have several articles open at once: each is a tab along the top, **＋** starts
+another, **Open ▾** reopens one you've closed, and **×** closes a tab without
+deleting anything. Every open article is also a file in `articles/`, written as
+you type, so they survive a cleared browser; **Delete** removes the article and
+its file. Name it in the box on the left of the toolbar — that name is the tab's
+label and what Save post and Render out call their files (renaming changes the
+name inside the file, not the file itself).
+
+Paste an
 article and it splits into paragraphs at the blank lines (if the text has no
 blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
 links and emphasis are read as plain text; `---` rules, front matter and code
@@ -256,7 +265,9 @@ While it's reading, either one goes next instead of cutting anything off.
 - **Copy text** copies the article, marks and all, to paste back into the post;
   **⬇ Render out** saves the whole article as a `.wav` in `output/`, read the
   same way, and tells you the path.
-- The article is kept in this browser (not in a file) until you press Clear.
+- Reading carries on in the tab it started in, so you can work on another
+  article while one is being read; that tab is marked ▶. Only one can be read
+  at a time.
 
 The page only listens on 127.0.0.1 and only takes requests from itself.
 Ctrl+C in the terminal works like Shut down: it stops the page and Jarvis
