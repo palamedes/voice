@@ -509,6 +509,7 @@ scripts/jarvis_daemon.py  warm Breeze server behind jarvis
 scripts/jarvis_ui.py      the local web server behind jarvis-ui
 ui/jarvis.html            the Jarvis page itself
 conversations/            conversations saved from the Jarvis page (JSON)
+articles/                 articles open in the Jarvis page (JSON, saved as you type)
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)

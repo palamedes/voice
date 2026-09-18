@@ -15,5 +15,6 @@ __pycache__/
 # Personal/local Claude Code settings (machine-specific permission grants)
 .claude/settings.local.json
 
-# OS cruft
+# Editor / OS cruft
+.idea/
 .DS_Store
