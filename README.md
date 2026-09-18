@@ -170,12 +170,13 @@ character in a story or a D&D session its own voice:
   reads the whole exchange with the voice switches and the beats between
   speakers; **Copy as script** gives you the `[voice]`-marked text to render
   to a file with `./speak --file` (quit Jarvis first, since both need the GPU).
-  **⬇ Render out** downloads the whole conversation as a `.wav` named after
-  it: the running Jarvis renders it with the same pacing, voice levelling and
-  loudness as `./speak` (in roughly 40% of the audio's length), and the
-  download is the only copy kept. While it renders, the page waits behind a
-  box showing how far along it is and about how long is left; **Cancel**
-  stops the render.
+  **⬇ Render out** saves the whole conversation as a `.wav` in `output/`,
+  named after it: the running Jarvis renders it with the same pacing, voice
+  levelling and loudness as `./speak` (in roughly 40% of the audio's length),
+  and the page shows the path it wrote. An earlier render of the same name is
+  never overwritten — the new one gets `-2`, `-3` and so on. While it renders,
+  the page waits behind a box showing how far along it is and about how long is
+  left; **Cancel** stops the render.
   "Speak each line as I add it" is off by default.
 - **Nothing on the page interrupts:** a line you send while Jarvis is talking
   waits its turn and plays after a short beat, so you can type as fast as you
@@ -248,8 +249,13 @@ While it's reading, either one goes next instead of cutting anything off.
   to 1.3×) without changing the voice's pitch, and your pauses keep the length
   you gave them — the same as `./speak --rate`. Click the number to go back to
   1.00×. It applies to reading and to Render out.
+- **💾 Save post** writes the article to `posts/` as Markdown — the same text
+  Copy text gives you, named after its first line, never overwriting an
+  earlier one (`-2`, `-3`, …). The page shows the path. From there
+  `./speak --file posts/…md` renders it without the page.
 - **Copy text** copies the article, marks and all, to paste back into the post;
-  **⬇ Render out** downloads the whole article as a `.wav`, read the same way.
+  **⬇ Render out** saves the whole article as a `.wav` in `output/`, read the
+  same way, and tells you the path.
 - The article is kept in this browser (not in a file) until you press Clear.
 
 The page only listens on 127.0.0.1 and only takes requests from itself.

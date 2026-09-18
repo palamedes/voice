@@ -13,10 +13,10 @@ leaves Jarvis running). It only listens on 127.0.0.1.
 """
 import argparse
 import json
+import os
 import re
 import signal
 import sys
-import tempfile
 import threading
 import time
 import webbrowser
@@ -28,14 +28,28 @@ import jarvis_daemon as jarvis  # noqa: E402
 from audio_common import strip_markdown  # noqa: E402
 from index_speak import list_voices  # noqa: E402
 
-PAGE = Path(__file__).resolve().parent.parent / "ui" / "jarvis.html"
+ROOT = Path(__file__).resolve().parent.parent
+PAGE = ROOT / "ui" / "jarvis.html"
 # Saved conversations: one JSON file each, so scenes can also be prepared in an editor.
-CONVERSATIONS = Path(__file__).resolve().parent.parent / "conversations"
+CONVERSATIONS = ROOT / "conversations"
+# Render out writes here, like ./speak does (JARVIS_OUTPUT moves it, which tests use).
+OUTPUT = Path(os.environ.get("JARVIS_OUTPUT") or ROOT / "output")
+# Save post writes the article here as Markdown (JARVIS_POSTS moves it).
+POSTS = Path(os.environ.get("JARVIS_POSTS") or ROOT / "posts")
 
 
 def slug(name: str) -> str:
     """File name for a conversation's display name ("Rusty Tankard" -> rusty-tankard)."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:80] or "untitled"
+
+
+def free_name(path: Path) -> Path:
+    """path, or path-2, path-3, ... so a render never writes over an earlier one."""
+    stem, n = path.stem, 2
+    while path.exists():
+        path = path.with_name(f"{stem}-{n}{path.suffix}")
+        n += 1
+    return path
 
 
 def conversation_path(cid: str) -> Path | None:
@@ -186,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
             print("[jarvis-ui] shut down from the page", flush=True)
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         elif self.path == "/api/render":
-            # Jarvis renders into a temp folder; the browser's download is the only copy kept.
+            # Jarvis writes the wav straight into output/, the same place ./speak puts its renders.
             text = str(body.get("text", "")).strip()
             if body.get("markdown"):
                 text = strip_markdown(text)
@@ -195,17 +209,27 @@ class Handler(BaseHTTPRequestHandler):
             voice = str(body.get("voice") or "")
             if voice in list_voices():
                 text = f"[{voice}] {text}"   # who reads until a [voice] mark says otherwise
-            with tempfile.TemporaryDirectory(prefix="jarvis-render-") as tmp:
-                out = Path(tmp) / "render.wav"
-                msg = {"cmd": "render", "text": text, "out": str(out),
-                       "my_breaths": bool(body.get("my_breaths"))}
-                if isinstance(body.get("rate"), (int, float)):
-                    msg["rate"] = body["rate"]
-                resp = jarvis.request(msg, timeout=None)
-                if not resp or not resp.get("ok") or not out.exists():
-                    return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
-                data = out.read_bytes()
-            self.send_download(data, slug(str(body.get("name") or "conversation")) + ".wav")
+            OUTPUT.mkdir(parents=True, exist_ok=True)
+            out = free_name(OUTPUT / (slug(str(body.get("name") or "conversation")) + ".wav"))
+            msg = {"cmd": "render", "text": text, "out": str(out),
+                   "my_breaths": bool(body.get("my_breaths"))}
+            if isinstance(body.get("rate"), (int, float)):
+                msg["rate"] = body["rate"]
+            resp = jarvis.request(msg, timeout=None)
+            if not resp or not resp.get("ok") or not out.exists():
+                return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
+            shown = out.relative_to(ROOT) if out.is_relative_to(ROOT) else out
+            self.send_json({"ok": True, "file": str(shown), "seconds": resp.get("seconds")})
+        elif self.path == "/api/post":
+            # The article, as Markdown, into posts/ — the text as it reads, marks and all.
+            text = str(body.get("text", "")).strip()
+            if not text:
+                return self.send_json({"ok": False, "error": "nothing to save"}, 400)
+            POSTS.mkdir(parents=True, exist_ok=True)
+            path = free_name(POSTS / (slug(str(body.get("name") or "post")) + ".md"))
+            path.write_text(text + "\n", encoding="utf-8")
+            shown = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+            self.send_json({"ok": True, "file": str(shown)})
         elif self.path == "/api/conversations/save":
             name = str(body.get("name") or "").strip()
             # Re-saving what's loaded keeps its file; a new name gets a new one.

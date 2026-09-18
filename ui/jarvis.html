@@ -224,7 +224,7 @@
     </form>
     <div class="actions">
       <button id="play-all" type="button">▶ Play all</button>
-      <button id="render" type="button" title="Download the whole conversation as a .wav">⬇ Render out</button>
+      <button id="render" type="button" title="Render the whole conversation to a .wav in output/">⬇ Render out</button>
       <button id="copy" type="button">Copy as script</button>
       <label class="check"><input id="autospeak" type="checkbox"> speak each line as I add it</label>
     </div>
@@ -249,7 +249,8 @@
       <span class="spacer"></span>
       <button id="edit-all" type="button" class="small">Edit as text</button>
       <button id="article-copy" type="button" class="small">Copy text</button>
-      <button id="article-render" type="button" class="small" title="Download the whole article as a .wav">⬇ Render out</button>
+      <button id="article-save" type="button" class="small" title="Save the article to posts/ as Markdown">💾 Save post</button>
+      <button id="article-render" type="button" class="small" title="Render the whole article to a .wav in output/">⬇ Render out</button>
       <button id="article-clear" type="button" class="small">Clear</button>
     </div>
     <textarea id="raw" aria-label="Article text"
@@ -699,29 +700,20 @@ function playAll() {
 }
 $("#play-all").addEventListener("click", playAll);
 
-// Jarvis renders text to a .wav (same finish as ./speak) and the browser downloads it,
-// named after the conversation or article.
+// Jarvis renders text to a .wav (same finish as ./speak) and saves it in output/, named
+// after the conversation or article.
 async function renderWav(button, body) {
-  const file = slug(body.name) + ".wav";
   const label = button.textContent;
   button.disabled = true;
   button.textContent = "Rendering…";
   showRendering(body.name, body.text);
   try {
-    const response = await fetch("/api/render", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("audio/")) {
-      const reply = await response.json().catch(() => ({}));
-      return toast(reply.error === "cancelled" ? "Render cancelled" : reply.error || "Couldn't render it");
+    const reply = await api("/api/render", body);
+    if (!reply.ok) {
+      return toast(reply.error === "cancelled" ? "Render cancelled"
+        : outdated(reply.error) || reply.error || "Couldn't render it");
     }
-    const url = URL.createObjectURL(await response.blob());
-    const link = el("a", { href: url, download: file });
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast(`Rendered ${file}`);
+    toast(`Saved ${reply.file}`);
   } catch {
     toast("The page's server isn't running");
   } finally {
@@ -1389,15 +1381,27 @@ $("#article-copy").addEventListener("click", async () => {
   }
 });
 
+// The article's first line, for naming the files it's saved or rendered into.
+const articleTitle = () => (article.paras.length
+  ? article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : "");
+
 $("#article-render").addEventListener("click", () => {
   if (rawMode) setRaw(false);
   if (!article.paras.length) return toast("Nothing to render yet");
   if (!article.voice) return toast("Pick who reads it first");
   if (!ready) return toast("Start Jarvis first (top left)");
-  const title = article.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60);
   renderWav($("#article-render"), { text: articleScript(), voice: article.voice, markdown: true,
                                     my_breaths: article.myBreaths, rate: article.rate,
-                                    name: title || "article" });
+                                    name: articleTitle() || "article" });
+});
+
+// Save post: the article as Markdown in posts/, the same text Copy text gives you.
+$("#article-save").addEventListener("click", async () => {
+  if (rawMode) setRaw(false);
+  if (!article.paras.length) return toast("Nothing to save yet");
+  const reply = await api("/api/post", { text: articleScript(), name: articleTitle() || "post" })
+    .catch(() => ({ error: "The page's server isn't running" }));
+  toast(reply.ok ? `Saved ${reply.file}` : outdated(reply.error) || reply.error || "Couldn't save it");
 });
 
 function render() {
