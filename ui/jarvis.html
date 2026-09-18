@@ -132,6 +132,7 @@
   .pickmenu select { position: absolute; inset: 0; width: 100%; padding: 0; border: none;
                      opacity: 0; cursor: pointer; }
   .doc-title { width: 11rem; font-weight: 600; }
+  .render-range { width: 5.5rem; padding: .15rem .4rem; font-size: .85rem; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
   .reader-pick { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--muted); }
   .reader-pick select { width: auto; max-width: 15rem; }
@@ -273,7 +274,11 @@
       <button id="edit-all" type="button" class="small">Edit as text</button>
       <button id="article-copy" type="button" class="small">Copy text</button>
       <button id="article-save" type="button" class="small" title="Save the article to posts/ as Markdown">💾 Save post</button>
-      <button id="article-render" type="button" class="small" title="Render the whole article to a .wav in output/">⬇ Render out</button>
+      <button id="article-render" type="button" class="small"
+              title="Render the article (or the paragraphs in the box beside it) to a .wav in output/">⬇ Render out</button>
+      <input id="render-range" class="render-range" placeholder="all ¶" aria-label="Paragraphs to render"
+             title="Which paragraphs Render out does: 29-45, 1-10, 10- (to the end), -10, or 7 (just that one). Blank for all.">
+
       <button id="article-delete" type="button" class="small" title="Delete this article and its file">Delete</button>
     </div>
     <textarea id="raw" aria-label="Article text"
@@ -1347,15 +1352,16 @@ function voiceAtIn(doc, index) {
 }
 const voiceAt = (index) => voiceAtIn(article, index);
 
-// The article as one text, with a [voice] switch wherever a paragraph starts in a voice
-// other than the one reading just before it: what Render out and Copy text use, so the
-// paragraphs' own readers survive the trip into ./speak. (A switch goes after a Markdown
-// heading, quote or list marker, so the marker is still stripped.)
-function articleScript() {
+// The article (or its paragraphs from..to, counting from 0) as one text, with a [voice]
+// switch wherever a paragraph starts in a voice other than the one reading just before it:
+// what Render out and Copy text use, so the paragraphs' own readers survive the trip into
+// ./speak. A slice opens in whichever voice is reading there. (A switch goes after a
+// Markdown heading, quote or list marker, so the marker is still stripped.)
+function articleScript(from = 0, to = article.paras.length - 1) {
   const known = new Set(voices);
   let running = article.voice;
-  return article.paras.map((para, i) => {
-    const start = voiceAt(i);
+  return article.paras.slice(from, to + 1).map((para, k) => {
+    const start = voiceAt(from + k);
     const text = start === running ? para.text
       : para.text.replace(/^(\s{0,3}(?:#{1,6}|>|[-*+])\s+)?/, (marker) => `${marker}[${start}] `);
     running = start;
@@ -1551,14 +1557,38 @@ $("#article-copy").addEventListener("click", async () => {
 // Its name, or its first line: what the files it's saved or rendered into are called.
 const articleTitle = () => docTitle(article);
 
+// Which paragraphs to render, as typed beside Render out: "29-45", "10-" (to the end),
+// "-10" (from the start), "7" (just that one); blank for all. Counting from 1, as the ¶
+// numbers do. Returns [from, to] counting from 0, or null if it doesn't fit the article.
+function parseRange(text, count) {
+  const m = text.trim().match(/^(\d*)\s*(-|–|—|\.\.|to)?\s*(\d*)$/i);
+  if (!m) return null;
+  const [, a, dash, b] = m;
+  if (!a && !b) return dash ? null : [0, count - 1];
+  const from = a ? Number(a) : 1;
+  const to = b ? Math.min(Number(b), count) : dash ? count : from;
+  if (from < 1 || from > count || to < from) return null;
+  return [from - 1, to - 1];
+}
+
 $("#article-render").addEventListener("click", () => {
   if (rawMode) setRaw(false);
   if (!article.paras.length) return toast("Nothing to render yet");
   if (!article.voice) return toast("Pick who reads it first");
   if (!ready) return toast("Start Jarvis first (top left)");
-  renderWav($("#article-render"), { text: articleScript(), voice: article.voice, markdown: true,
+  const range = parseRange($("#render-range").value, article.paras.length);
+  if (!range) {
+    return toast(`Paragraphs run from 1 to ${article.paras.length}: try 29-45, 1-10, 10- or 7`);
+  }
+  const [from, to] = range;
+  const part = from === 0 && to === article.paras.length - 1 ? ""
+    : from === to ? ` p${from + 1}` : ` p${from + 1}-${to + 1}`;   // in the file name
+  renderWav($("#article-render"), { text: articleScript(from, to), voice: article.voice, markdown: true,
                                     my_breaths: article.myBreaths, rate: article.rate,
-                                    name: articleTitle() || "article" });
+                                    name: (articleTitle() || "article") + part });
+});
+$("#render-range").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("#article-render").click(); }
 });
 
 // Save post: the article as Markdown in posts/, the same text Copy text gives you. Saving

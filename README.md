@@ -265,7 +265,12 @@ While it's reading, either one goes next instead of cutting anything off.
   `posts/` is the readable copy for everything outside the page.)
 - **Copy text** copies the article, marks and all, to paste back into the post;
   **⬇ Render out** saves the whole article as a `.wav` in `output/`, read the
-  same way, and tells you the path.
+  same way, and tells you the path. To render just part of it, type the
+  paragraphs in the box beside it — `29-45`, `1-10`, `10-` (to the end), `-10`
+  (from the start) or `7` (just that one); blank means all, and Enter in the
+  box starts the render. The file gets the range in its name
+  (`field-notes-p29-45.wav`), and it opens in whichever voice is reading at
+  that paragraph.
 - Reading carries on in the tab it started in, so you can work on another
   article while one is being read; that tab is marked ▶. Only one can be read
   at a time.
