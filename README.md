@@ -220,9 +220,8 @@ its file. Name it in the box on the left of the toolbar — that name is the tab
 label and what Save post and Render out call their files (renaming changes the
 name inside the file, not the file itself).
 
-Paste an
-article and it splits into paragraphs at the blank lines (if the text has no
-blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
+Paste an article and it splits into paragraphs at the blank lines (if the text
+has no blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
 links and emphasis are read as plain text; `---` rules, front matter and code
 blocks are skipped. Pick who reads it by clicking a voice in the voices list (a ✓
 marks the reader; **Read by** does the same), and press **▶ Read**: Jarvis
@@ -259,9 +258,11 @@ While it's reading, either one goes next instead of cutting anything off.
   you gave them — the same as `./speak --rate`. Click the number to go back to
   1.00×. It applies to reading and to Render out.
 - **💾 Save post** writes the article to `posts/` as Markdown — the same text
-  Copy text gives you, named after its first line, never overwriting an
-  earlier one (`-2`, `-3`, …). The page shows the path. From there
-  `./speak --file posts/…md` renders it without the page.
+  Copy text gives you, named after the article. Saving again updates that same
+  file (it says "Updated"); renaming the article starts a new one. The page
+  shows the path, and from there `./speak --file posts/…md` renders it without
+  the page. (The article itself lives in `articles/` and saves as you type;
+  `posts/` is the readable copy for everything outside the page.)
 - **Copy text** copies the article, marks and all, to paste back into the post;
   **⬇ Render out** saves the whole article as a `.wav` in `output/`, read the
   same way, and tells you the path.

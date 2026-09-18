@@ -54,20 +54,20 @@ def free_name(path: Path) -> Path:
     return path
 
 
-def conversation_path(cid: str) -> Path | None:
-    """conversations/<id>.json, or None if the id could point outside that folder."""
-    path = CONVERSATIONS / f"{cid}.json"
-    if not cid or "/" in cid or "\\" in cid or cid.startswith(".") or path.parent != CONVERSATIONS:
+def safe_path(folder: Path, name: str, suffix: str) -> Path | None:
+    """folder/<name><suffix>, or None if the name could point outside that folder."""
+    path = folder / f"{name}{suffix}"
+    if not name or "/" in name or "\\" in name or name.startswith(".") or path.parent != folder:
         return None
     return path
+
+
+def conversation_path(cid: str) -> Path | None:
+    return safe_path(CONVERSATIONS, cid, ".json")
 
 
 def article_path(aid: str) -> Path | None:
-    """articles/<id>.json, or None if the id could point outside that folder."""
-    path = ARTICLES / f"{aid}.json"
-    if not aid or "/" in aid or "\\" in aid or aid.startswith(".") or path.parent != ARTICLES:
-        return None
-    return path
+    return safe_path(ARTICLES, aid, ".json")
 
 
 def clean_article(name: str, doc: dict) -> dict:
@@ -84,6 +84,7 @@ def clean_article(name: str, doc: dict) -> dict:
     return {"name": name, "voice": str(doc.get("voice") or ""),
             "myBreaths": bool(doc.get("myBreaths")),
             "rate": min(max(float(rate), 0.5), 2.0) if isinstance(rate, (int, float)) else 1.0,
+            "postId": str(doc.get("postId") or ""),   # the post in posts/ this article writes
             "paras": paras}
 
 
@@ -260,14 +261,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "file": str(shown), "seconds": resp.get("seconds")})
         elif self.path == "/api/post":
             # The article, as Markdown, into posts/ — the text as it reads, marks and all.
+            # With an id, it writes that same file again; without one, it takes a free name.
             text = str(body.get("text", "")).strip()
             if not text:
                 return self.send_json({"ok": False, "error": "nothing to save"}, 400)
             POSTS.mkdir(parents=True, exist_ok=True)
-            path = free_name(POSTS / (slug(str(body.get("name") or "post")) + ".md"))
+            again = safe_path(POSTS, str(body.get("id") or ""), ".md")
+            replacing = bool(again and again.exists())
+            path = again if replacing else free_name(POSTS / (slug(str(body.get("name") or "post")) + ".md"))
             path.write_text(text + "\n", encoding="utf-8")
             shown = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-            self.send_json({"ok": True, "file": str(shown)})
+            self.send_json({"ok": True, "file": str(shown), "id": path.stem, "replaced": replacing})
         elif self.path == "/api/articles/save":
             name = str(body.get("name") or "").strip()
             # Keeps the file it already has; renaming changes the name inside it, not the file.

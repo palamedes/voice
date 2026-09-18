@@ -916,7 +916,7 @@ let docSeq = 0;
 
 function cleanDoc(doc) {
   const tidy = Object.assign({ name: "", paras: [], voice: "", myBreaths: false, resumeId: 0,
-                               rate: 1, fileId: "" }, doc);
+                               rate: 1, fileId: "", postId: "" }, doc);
   tidy.id = ++docSeq;
   tidy.name = String(tidy.name || "");
   tidy.rate = Number(tidy.rate) || 1;
@@ -970,6 +970,7 @@ const docSaved = new Map();       // article id -> the JSON last written to its 
 const docTitle = (doc) => (doc.name || (doc.paras.length
   ? doc.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : ""));
 const docData = (doc) => ({ name: doc.name, voice: doc.voice, myBreaths: doc.myBreaths, rate: doc.rate,
+                            postId: doc.postId,
                             paras: doc.paras.map((p) => (p.voice ? { text: p.text, voice: p.voice }
                                                                  : { text: p.text })) });
 
@@ -1560,13 +1561,19 @@ $("#article-render").addEventListener("click", () => {
                                     name: articleTitle() || "article" });
 });
 
-// Save post: the article as Markdown in posts/, the same text Copy text gives you.
+// Save post: the article as Markdown in posts/, the same text Copy text gives you. Saving
+// again writes the same file; renaming the article starts a new one.
 $("#article-save").addEventListener("click", async () => {
   if (rawMode) setRaw(false);
   if (!article.paras.length) return toast("Nothing to save yet");
-  const reply = await api("/api/post", { text: articleScript(), name: articleTitle() || "post" })
-    .catch(() => ({ error: "The page's server isn't running" }));
-  toast(reply.ok ? `Saved ${reply.file}` : outdated(reply.error) || reply.error || "Couldn't save it");
+  const title = articleTitle() || "post";
+  const body = { text: articleScript(), name: title };
+  if (article.postId && article.postId === slug(title)) body.id = article.postId;
+  const reply = await api("/api/post", body).catch(() => ({ error: "The page's server isn't running" }));
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't save it");
+  article.postId = reply.id;
+  save();
+  toast(`${reply.replaced ? "Updated" : "Saved"} ${reply.file}`);
 });
 
 function render() {
