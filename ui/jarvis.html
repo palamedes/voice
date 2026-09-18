@@ -916,7 +916,7 @@ let docSeq = 0;
 
 function cleanDoc(doc) {
   const tidy = Object.assign({ name: "", paras: [], voice: "", myBreaths: false, resumeId: 0,
-                               rate: 1, fileId: "", postId: "" }, doc);
+                               rate: 1, fileId: "", postId: "", postName: "" }, doc);
   tidy.id = ++docSeq;
   tidy.name = String(tidy.name || "");
   tidy.rate = Number(tidy.rate) || 1;
@@ -970,7 +970,7 @@ const docSaved = new Map();       // article id -> the JSON last written to its 
 const docTitle = (doc) => (doc.name || (doc.paras.length
   ? doc.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : ""));
 const docData = (doc) => ({ name: doc.name, voice: doc.voice, myBreaths: doc.myBreaths, rate: doc.rate,
-                            postId: doc.postId,
+                            postId: doc.postId, postName: doc.postName,
                             paras: doc.paras.map((p) => (p.voice ? { text: p.text, voice: p.voice }
                                                                  : { text: p.text })) });
 
@@ -1568,10 +1568,13 @@ $("#article-save").addEventListener("click", async () => {
   if (!article.paras.length) return toast("Nothing to save yet");
   const title = articleTitle() || "post";
   const body = { text: articleScript(), name: title };
-  if (article.postId && article.postId === slug(title)) body.id = article.postId;
+  // Still called what it was called last time? Then write that same file, whatever it
+  // ended up named (a first save with the name already taken lands on "-2", "-3", ...).
+  if (article.postId && article.postName === title) body.id = article.postId;
   const reply = await api("/api/post", body).catch(() => ({ error: "The page's server isn't running" }));
   if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't save it");
   article.postId = reply.id;
+  article.postName = title;
   save();
   toast(`${reply.replaced ? "Updated" : "Saved"} ${reply.file}`);
 });

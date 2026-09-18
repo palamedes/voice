@@ -84,7 +84,9 @@ def clean_article(name: str, doc: dict) -> dict:
     return {"name": name, "voice": str(doc.get("voice") or ""),
             "myBreaths": bool(doc.get("myBreaths")),
             "rate": min(max(float(rate), 0.5), 2.0) if isinstance(rate, (int, float)) else 1.0,
-            "postId": str(doc.get("postId") or ""),   # the post in posts/ this article writes
+            # The post in posts/ this article writes, and the name it was written under.
+            "postId": str(doc.get("postId") or ""),
+            "postName": str(doc.get("postName") or ""),
             "paras": paras}
 
 
