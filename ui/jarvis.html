@@ -150,8 +150,8 @@
   .doc-title { width: 11rem; font-weight: 600; }
   .render-range { width: 5.5rem; padding: .15rem .4rem; font-size: .85rem; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
-  .reader-pick { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--muted); }
-  .reader-pick select { width: auto; max-width: 15rem; }
+  .reader-now { font-size: .85rem; color: var(--muted); max-width: 16rem; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
   .pace { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--muted); }
   .pace input[type="range"] { width: 7rem; padding: 0; background: transparent; border: none; }
   #pace-value { min-width: 3.8rem; }
@@ -276,7 +276,7 @@
     </div>
     <div class="toolbar">
       <input id="article-name" class="doc-title" placeholder="Untitled" aria-label="Article name">
-      <label class="reader-pick">Read by <select id="reader"></select></label>
+      <span id="reader-now" class="reader-now" title="Pick who reads in the Voices column (shift-click to add another)"></span>
       <button id="read" type="button">▶ Read</button>
       <button id="read-top" type="button" class="small" title="Next ▶ Read starts from the top" hidden>⟲ top</button>
       <button id="read-stop" type="button" title="Stop now (Esc)" disabled>■ Stop</button>
@@ -305,6 +305,7 @@
       while it's reading, either one goes next.
       Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one,
       Backspace at the very start joins it onto the one above, and ↑ ↓ step into the paragraph above or below.
+      Pick who reads in the Voices column — shift-click a second voice and the paragraphs are shared out between them.
       The name under ¶ picks who reads that one paragraph;
       a [voice] switch typed in the text carries on until the next one.</div>
   </section>
@@ -504,10 +505,11 @@ const looseDot = (members) => (members.some((v) => loose.has(v))
 // One voice: picks who reads in the Article view, adds it to the panel otherwise.
 function voiceButton(voice, label, reading) {
   if (reading) {
-    const on = voice === article.voice;
-    return el("button", { type: "button", class: "vpick", role: "radio", "aria-checked": String(on),
-                          title: on ? "Reading the article" : `Have ${voice} read the article`,
-                          onclick: () => setReader(voice) },
+    const on = readersOf(article).includes(voice);
+    return el("button", { type: "button", class: "vpick", role: "checkbox", "aria-checked": String(on),
+                          title: on ? "Reading the article (shift-click to drop it)"
+                            : `Have ${voice} read the article (shift-click to add it to the readers)`,
+                          onclick: (e) => setReader(voice, e.shiftKey) },
               [el("span", { class: "vcheck", "aria-hidden": "true" }, on ? "✓" : ""),
                el("span", { class: "vname", title: voice }, label), ...looseDot([voice])]);
   }
@@ -628,7 +630,7 @@ function renderVoices() {
   const query = $("#search").value.trim().toLowerCase();
   const reading = state.mode === "article";
   const list = $("#voices");
-  list.setAttribute("role", reading ? "radiogroup" : "list");
+  list.setAttribute("role", reading ? "group" : "list");
   list.setAttribute("aria-label", reading ? "Who reads the article" : "Voices");
   const groups = voiceGroups(query);
   const rows = [];
@@ -659,7 +661,7 @@ function renderVoices() {
         el("span", { class: "vname" }, titleCase(group.key)),
         el("span", { class: "vcount" }, group.members.length > 1 ? String(group.members.length) : ""),
         el("span", { class: "vcheck", "aria-hidden": "true" },
-           reading && !open && group.members.includes(article.voice) ? "✓" : ""),
+           reading && !open && group.members.some((v) => readersOf(article).includes(v)) ? "✓" : ""),
         ...looseDot(group.members),
       ]),
       pin,
@@ -1134,9 +1136,10 @@ let paraSeq = 0;
 let docSeq = 0;
 
 function cleanDoc(doc) {
-  const tidy = Object.assign({ name: "", paras: [], voice: "", myBreaths: false, resumeId: 0,
-                               rate: 1, fileId: "", postId: "", postName: "" }, doc);
+  const tidy = Object.assign({ name: "", paras: [], voice: "", readers: [], myBreaths: false,
+                               resumeId: 0, rate: 1, fileId: "", postId: "", postName: "" }, doc);
   tidy.id = ++docSeq;
+  tidy.readers = (Array.isArray(tidy.readers) ? tidy.readers : []).filter((v) => typeof v === "string");
   tidy.name = String(tidy.name || "");
   tidy.rate = Number(tidy.rate) || 1;
   tidy.paras = (Array.isArray(tidy.paras) ? tidy.paras : [])
@@ -1188,7 +1191,8 @@ let savedDocs = [];               // what's in articles/ on this machine
 const docSaved = new Map();       // article id -> the JSON last written to its file
 const docTitle = (doc) => (doc.name || (doc.paras.length
   ? doc.paras[0].text.split("\n")[0].replace(/^[#\s]+/, "").slice(0, 60) : ""));
-const docData = (doc) => ({ name: doc.name, voice: doc.voice, myBreaths: doc.myBreaths, rate: doc.rate,
+const docData = (doc) => ({ name: doc.name, voice: doc.voice, readers: doc.readers,
+                            myBreaths: doc.myBreaths, rate: doc.rate,
                             postId: doc.postId, postName: doc.postName,
                             paras: doc.paras.map((p) => (p.voice ? { text: p.text, voice: p.voice }
                                                                  : { text: p.text })) });
@@ -1312,25 +1316,42 @@ $("#article-name").addEventListener("input", () => {
   renderDocs();
 });
 
+// Who reads this article: one voice, or several to share it out between them.
+const readersOf = (doc) => (doc.readers.length ? doc.readers : doc.voice ? [doc.voice] : []);
+
 function renderReader() {
   $("#article-name").value = article.name;
-  const choices = [...new Set([...voices, ...(article.voice ? [article.voice] : [])])];
-  $("#reader").replaceChildren(el("option", { value: "" }, "— pick a voice —"), ...choices.map((voice) => {
-    const name = labelFor(voice);
-    const option = el("option", { value: voice }, name === voice ? voice : `${name} (${voice})`);
-    option.selected = voice === article.voice;
-    return option;
-  }));
+  const readers = readersOf(article);
+  $("#reader-now").textContent = !readers.length ? "Pick a voice in the Voices column"
+    : readers.length === 1 ? `Read by ${labelFor(readers[0])}`
+    : `Read by ${readers.length} voices: ${readers.map(labelFor).join(", ")}`;
 }
 
-function setReader(voice) {
-  article.voice = voice;
+// A click picks the reader; shift-click adds another (or drops one), and the paragraphs
+// are then shared out between them.
+function setReader(voice, add = false) {
+  const readers = [...readersOf(article)];
+  const at = readers.indexOf(voice);
+  if (!add) readers.splice(0, readers.length, voice);
+  else if (at < 0) readers.push(voice);
+  else if (readers.length > 1) readers.splice(at, 1);
+  article.readers = readers;
+  article.voice = readers[0] || "";
   save();
   renderReader();
   renderVoices();
   paintArticle();
 }
-$("#reader").addEventListener("change", (e) => setReader(e.target.value));
+
+// With more than one reader, each paragraph keeps the same one of them every time — from
+// its id, not a fresh coin toss — so a render sounds like what you heard.
+function assignedReader(doc, para) {
+  const readers = readersOf(doc);
+  if (readers.length < 2) return doc.voice;
+  let h = Math.imul(para.id ^ (para.id >>> 15), 2246822507);   // scrambled, so it doesn't
+  h = Math.imul(h ^ (h >>> 13), 3266489909);                   // just alternate odd/even
+  return readers[((h ^ (h >>> 16)) >>> 0) % readers.length];
+}
 
 const myBreaths = $("#my-breaths");
 myBreaths.checked = article.myBreaths;
@@ -1561,12 +1582,12 @@ function renderArticle() {
 function paintArticle() {
   const known = new Set(voices);
   const reading = reader.active && reader.doc === article;   // another tab may be the one reading
-  let carried = article.voice;          // the reader, or the last [voice] switch typed so far
+  let carried = "";                     // the last [voice] switch typed so far, if any
   article.paras.forEach((para, i) => {
     const node = paraNodes.get(para.id);
     if (!node) return;
     node.num.textContent = "¶" + (i + 1);
-    paintParaVoice(node, para, para.voice || carried);
+    paintParaVoice(node, para, para.voice || carried || assignedReader(article, para));
     for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) carried = mark[1];
     node.row.classList.toggle("current", reading && para.id === reader.currentId);
     node.row.classList.toggle("read", reader.read.has(para.id));
@@ -1594,13 +1615,15 @@ function paintParaVoice(node, para, start) {
   chip.classList.toggle("own", Boolean(para.voice));
   chip.classList.toggle("other", start !== article.voice);
   chip.title = para.voice ? `Read by ${label} (this paragraph only)`
-    : start !== article.voice ? `Read by ${label} (a [voice] switch earlier in the text)`
+    : start !== article.voice ? `Read by ${label} (its turn, or a [voice] switch earlier in the text)`
     : `Read by the article's reader, ${label}`;
   if (document.activeElement === pick) return;     // don't rebuild a menu while it's open
-  const key = JSON.stringify([voices, article.voice, para.voice || "", state.panel]);
+  const key = JSON.stringify([voices, article.voice, article.readers, para.voice || "", state.panel]);
   if (pick.dataset.key !== key) {
     const choices = [...new Set([...voices, ...(para.voice ? [para.voice] : [])])];
-    pick.replaceChildren(el("option", { value: "" }, `Article reader (${labelFor(article.voice)})`),
+    const theirs = readersOf(article).length > 1 ? "Whoever's turn it is"
+      : `Article reader (${labelFor(article.voice)})`;
+    pick.replaceChildren(el("option", { value: "" }, theirs),
                          ...choices.map((voice) => el("option", { value: voice }, labelFor(voice))));
     pick.dataset.key = key;
   }
@@ -1624,11 +1647,12 @@ function setParaVoice(id, voice) {
 // as in ./speak; a paragraph's own reader doesn't).
 function voiceAtIn(doc, index) {
   const known = new Set(voices);
-  let voice = doc.voice;
+  let carried = "";
   for (const para of doc.paras.slice(0, index)) {
-    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) voice = mark[1];
+    for (const mark of para.text.matchAll(VOICE_MARK)) if (known.has(mark[1])) carried = mark[1];
   }
-  return doc.paras[index].voice || voice;
+  const para = doc.paras[index];
+  return para.voice || carried || assignedReader(doc, para);
 }
 const voiceAt = (index) => voiceAtIn(article, index);
 

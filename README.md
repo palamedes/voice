@@ -235,8 +235,11 @@ name inside the file, not the file itself).
 Paste an article and it splits into paragraphs at the blank lines (if the text
 has no blank lines at all, each line becomes a paragraph). Markdown is fine: headings,
 links and emphasis are read as plain text; `---` rules, front matter and code
-blocks are skipped. Pick who reads it by clicking a voice in the voices list (a ✓
-marks the reader; **Read by** does the same), and press **▶ Read**: Jarvis
+blocks are skipped. Pick who reads it by clicking a voice in the voices list (a
+✓ marks the reader, and the toolbar says who it is). **Shift-click** a second
+voice and the paragraphs are shared out between them — each paragraph keeps the
+same reader every time, so a render sounds like what you heard; shift-click a
+chosen voice again to drop it. Then press **▶ Read**: Jarvis
 reads one paragraph at a time,
 highlighting the one it's on and following it down the page.
 

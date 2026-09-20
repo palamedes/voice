@@ -82,7 +82,8 @@ def clean_article(name: str, doc: dict) -> dict:
             kept["voice"] = str(para["voice"])
         paras.append(kept)
     rate = doc.get("rate")
-    return {"name": name, "voice": str(doc.get("voice") or ""),
+    readers = [str(v) for v in (doc.get("readers") or []) if isinstance(v, str)]
+    return {"name": name, "voice": str(doc.get("voice") or ""), "readers": readers,
             "myBreaths": bool(doc.get("myBreaths")),
             "rate": min(max(float(rate), 0.5), 2.0) if isinstance(rate, (int, float)) else 1.0,
             # The post in posts/ this article writes, and the name it was written under.
