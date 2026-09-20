@@ -640,20 +640,23 @@ function renderVoices() {
                                title: pinned ? "Unpin from the top" : "Pin to the top of the list",
                                "aria-label": `${pinned ? "Unpin" : "Pin"} ${titleCase(group.key)}`,
                                "aria-pressed": String(pinned), onclick: () => togglePin(group.key) }, "📌");
-    if (group.members.length === 1) {
+    // A voice with no variant (art-bell, presenter) is a row of its own, written out the
+    // way a folder is; anything with a variant gets a folder, even on its own.
+    if (group.members.length === 1 && group.members[0] === group.key) {
       const voice = group.members[0];
-      const row = el("li", { class: cls("") }, [voiceButton(voice, voice, reading), pin]);
-      row.addEventListener("contextmenu", (e) => showMenu(e, voice, [voice]));
+      const row = el("li", { class: cls("") }, [voiceButton(voice, titleCase(voice), reading), pin]);
+      row.addEventListener("contextmenu", (e) => showMenu(e, titleCase(voice), [voice]));
       rows.push(row);
       return;
     }
     const header = el("li", { class: cls("") }, [
       el("button", { type: "button", class: "vgroup", "aria-expanded": String(open),
-                     title: `${group.members.length} voices — click to ${open ? "close" : "open"}`,
+                     title: `${group.members.length} voice${group.members.length > 1 ? "s" : ""}`
+                            + ` — click to ${open ? "close" : "open"}`,
                      onclick: () => toggleGroup(group.key) }, [
         el("span", { class: "vchev", "aria-hidden": "true" }, open ? "▾" : "▸"),
         el("span", { class: "vname" }, titleCase(group.key)),
-        el("span", { class: "vcount" }, String(group.members.length)),
+        el("span", { class: "vcount" }, group.members.length > 1 ? String(group.members.length) : ""),
         el("span", { class: "vcheck", "aria-hidden": "true" },
            reading && !open && group.members.includes(article.voice) ? "✓" : ""),
         ...looseDot(group.members),

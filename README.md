@@ -154,9 +154,13 @@ character in a story or a D&D session its own voice:
   quit from the command line.) The two buttons on the right switch between the
   **Panel + Conversation** view (described here) and the **Article** view
   (below).
-- **Voices:** every voice in `voice_samples/`, folded by person — one line per
-  name (`dennis-prager-1` and `-2` become **Dennis Prager**, 2 inside), which
-  you open, close, and 📌 pin to the top of the list. Click a voice to add it to
+- **Voices:** every voice in `voice_samples/`, folded by person and written out
+  — `dennis-prager-1` and `-2` become **Dennis Prager** with 2 inside, listed
+  as `1` and `2`, and `morgan-freeman-slow` becomes **Morgan Freeman** with
+  `slow` inside even on its own. A voice with no variant, like `art-bell`, is
+  its own row as **Art Bell** (the file's real name is in the tooltip, for
+  `[art-bell]` switches). Open and close a person, or 📌 pin them to the top of
+  the list. Click a voice to add it to
   the panel (or, in the Article view, to read the article); drop new clips into
   `voice_samples/` and press Reload. A blue dot means that clip isn't in the
   repo yet. Right-click a voice (or a person, for all of theirs) to **commit**
