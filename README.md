@@ -159,8 +159,11 @@ character in a story or a D&D session its own voice:
   you open, close, and 📌 pin to the top of the list. Click a voice to add it to
   the panel (or, in the Article view, to read the article); drop new clips into
   `voice_samples/` and press Reload. A blue dot means that clip isn't in the
-  repo yet — right-click it (or the person) to commit the clip and its
-  transcript. Committing doesn't push.
+  repo yet. Right-click a voice (or a person, for all of theirs) to **commit**
+  it, **take it out of the repo** (the files stay where they are), **rename**
+  it, or **delete** it. The clip and its transcript always move together, a
+  rename also fixes the name in saved articles and conversations (including
+  `[voice]` switches in their text), and none of it pushes.
 - **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
   press Enter, and Jarvis says it in that voice. **→** (or Ctrl+Enter) puts the
   line into the conversation instead, without changing the left and right

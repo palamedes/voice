@@ -359,6 +359,7 @@ function save() {
 
 let voices = [];
 let loose = new Set();      // voices whose files aren't committed (a dot in the list)
+let inRepo = new Set();     // ...and the ones git has
 let ready = false;
 let startingSince = 0;
 const starting = () => Date.now() - startingSince < 60000;
@@ -455,6 +456,7 @@ async function loadVoices() {
     const reply = await api("/api/voices");
     voices = reply.voices;
     loose = new Set(reply.loose || []);     // clips git hasn't got yet
+    inRepo = new Set(reply.tracked || []);
   } catch { voices = []; }
   renderVoices();
   renderSides();
@@ -525,15 +527,24 @@ function closeMenu() {
 function showMenu(event, label, members) {
   event.preventDefault();
   closeMenu();
+  const one = members.length === 1 ? members[0] : "";
   const waiting = members.filter((v) => loose.has(v));
-  const item = el("button", { type: "button", role: "menuitem", onclick: () => commitVoices(waiting) },
-                  waiting.length > 1 ? `Commit ${waiting.length} clips of ${label}`
-                    : waiting.length ? `Commit ${waiting[0]}` : `${label} is already committed`);
-  item.disabled = !waiting.length;
+  const here = members.filter((v) => inRepo.has(v));
+  const item = (text, enabled, action) => {
+    const button = el("button", { type: "button", role: "menuitem", onclick: action }, text);
+    button.disabled = !enabled;
+    return button;
+  };
   const menu = el("div", { id: "voice-menu", class: "menu", role: "menu" }, [
-    item,
-    el("p", { class: "menu-note" }, waiting.length
-      ? "Adds the clip and its transcript to the repo. It doesn't push." : "Nothing to commit."),
+    item(waiting.length > 1 ? `Commit ${waiting.length} clips of ${label}`
+      : waiting.length ? `Commit ${waiting[0]}` : `${label}: nothing to commit`,
+      waiting.length, () => voiceAction("commit", waiting, `Committed`)),
+    item(here.length > 1 ? `Take ${here.length} clips of ${label} out of the repo`
+      : here.length ? `Take ${here[0]} out of the repo` : `${label} isn't in the repo`,
+      here.length, () => voiceAction("untrack", here, "Taken out of the repo:")),
+    item(one ? `Rename ${one}…` : `Rename one voice at a time`, Boolean(one), () => renameVoice(one)),
+    item(one ? `Delete ${one}…` : `Delete one voice at a time`, Boolean(one), () => deleteVoice(one)),
+    el("p", { class: "menu-note" }, "The clip and its transcript move together. Nothing is pushed."),
   ]);
   document.body.append(menu);
   const box = menu.getBoundingClientRect();
@@ -541,14 +552,57 @@ function showMenu(event, label, members) {
   menu.style.top = `${Math.min(event.clientY, window.innerHeight - box.height - 8)}px`;
 }
 
-async function commitVoices(names) {
+async function voiceAction(what, names, said) {
   closeMenu();
   if (!names.length) return;
-  const reply = await api("/api/voices/commit", { voices: names })
+  const reply = await api(`/api/voices/${what}`, { voices: names })
     .catch(() => ({ error: "The page's server isn't running" }));
-  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't commit it");
-  toast(`Committed ${reply.commit} — push when you're ready`);
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't do that");
+  toast(`${said} ${reply.detail}`);
   loadVoices();
+}
+
+async function renameVoice(voice) {
+  closeMenu();
+  const name = (prompt(`Rename ${voice} to:`, voice) || "").trim().toLowerCase();
+  if (!name || name === voice) return;
+  const reply = await api("/api/voices/rename", { voice, name })
+    .catch(() => ({ error: "The page's server isn't running" }));
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't rename it");
+  renamedHere(voice, name);
+  toast(`${voice} ${reply.detail}`);
+  loadVoices();
+}
+
+async function deleteVoice(voice) {
+  closeMenu();
+  const also = inRepo.has(voice) ? " and from the repo" : "";
+  if (!confirm(`Delete ${voice}? Its clip and transcript go from voice_samples/${also}. `
+               + "Anything already rendered keeps working; this can't be undone.")) return;
+  const reply = await api("/api/voices/delete", { voices: [voice] })
+    .catch(() => ({ error: "The page's server isn't running" }));
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't delete it");
+  toast(`Deleted ${voice}`);
+  loadVoices();
+}
+
+// A renamed voice, in what this browser is holding: the panel, the conversation, the articles.
+function renamedHere(old, name) {
+  for (const member of state.panel) if (member.voice === old) member.voice = name;
+  for (const side of ["left", "right"]) if (state[side] === old) state[side] = name;
+  for (const line of state.lines) {
+    if (line.voice === old) line.voice = name;
+    line.text = line.text.replace(`[${old}]`, `[${name}]`);
+  }
+  for (const doc of state.articles) {
+    if (doc.voice === old) doc.voice = name;
+    for (const para of doc.paras) {
+      if (para.voice === old) para.voice = name;
+      para.text = para.text.split(`[${old}]`).join(`[${name}]`);
+    }
+  }
+  save();
+  render();
 }
 document.addEventListener("click", closeMenu);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });

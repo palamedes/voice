@@ -109,9 +109,20 @@ def clean_conversation(name: str, conv: dict) -> dict:
             "cast": cast, "lines": lines}
 
 
+VOICE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
+
+
 def git(*args, **run):
     """Run git in the project (never through a shell)."""
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, **run)
+
+
+def tracked(paths: list[Path]) -> list[Path]:
+    """Which of these files git has."""
+    if not paths:
+        return []
+    known = set(git("ls-files", "--", *[str(p) for p in paths]).stdout.splitlines())
+    return [p for p in paths if str(p.relative_to(ROOT)) in known]
 
 
 def loose_voices() -> list[str]:
@@ -132,6 +143,109 @@ def voice_files(names: list[str]) -> list[Path]:
         clip = known[name]
         files += [p for p in (clip, clip.with_suffix(".txt")) if p.exists()]
     return files
+
+
+def named(names: list[str]) -> str:
+    return f"the {names[0]} voice" if len(names) == 1 else f"{len(names)} voices: {', '.join(names)}"
+
+
+def commit_voices(names: list[str]) -> tuple[bool, str]:
+    """Put these clips and transcripts into the repo (it never pushes)."""
+    files = [str(p) for p in voice_files(names)]
+    add = git("add", "--", *files)
+    if add.returncode:
+        return False, add.stderr.strip()[:200]
+    done = git("commit", "-m", f"Add {named(names)}", "--", *files)
+    if done.returncode:
+        return False, (done.stdout + done.stderr).strip()[:200]
+    return True, git("log", "--oneline", "-1").stdout.strip()
+
+
+def untrack_voices(names: list[str]) -> tuple[bool, str]:
+    """Stop tracking these clips, leaving the files where they are. The removal has to be
+    committed from the index (the files stay on disk, so committing them by name would
+    only put them back), so it goes no further than a tidy index allows."""
+    files = [str(p) for p in tracked(voice_files(names))]
+    if not files:
+        return False, "git hasn't got those clips anyway"
+    if git("diff", "--cached", "--name-only").stdout.strip():
+        return False, "something else is already staged here — commit or unstage it first"
+    out = git("rm", "--cached", "-q", "--", *files)
+    if out.returncode:
+        return False, out.stderr.strip()[:200]
+    done = git("commit", "-m", f"Take {named(names)} out of the repo")
+    if done.returncode:
+        git("reset", "-q", "--", *files)        # put the index back as it was
+        return False, (done.stdout + done.stderr).strip()[:200]
+    return True, git("log", "--oneline", "-1").stdout.strip()
+
+
+def delete_voices(names: list[str]) -> tuple[bool, str]:
+    """Delete these clips and transcripts; if git had them, commit their removal too."""
+    files = voice_files(names)
+    have = [str(p) for p in tracked(files)]
+    if have:
+        out = git("rm", "-q", "--", *have)
+        if out.returncode:
+            return False, out.stderr.strip()[:200]
+        done = git("commit", "-m", f"Delete {named(names)}", "--", *have)
+        if done.returncode:
+            return False, (done.stdout + done.stderr).strip()[:200]
+    for path in files:
+        path.unlink(missing_ok=True)      # whatever git wasn't keeping
+    return True, f"deleted {', '.join(names)}"
+
+
+def rename_voice(old: str, new: str) -> tuple[bool, str]:
+    """Rename a voice: its clip, its transcript, and the name in any saved article or
+    conversation (including [voice] switches in their text)."""
+    known = list_voices()
+    if not VOICE_NAME.match(new):
+        return False, "a voice name takes lowercase letters, numbers and dashes"
+    if new in known:
+        return False, f"there's already a voice called {new}"
+    moved = []
+    for path in voice_files([old]):
+        to = path.with_name(new + path.suffix)
+        if tracked([path]):
+            out = git("mv", "--", str(path), str(to))
+            if out.returncode:
+                return False, out.stderr.strip()[:200]
+        else:
+            path.rename(to)
+        moved.append(to)
+    if tracked(moved):
+        git("commit", "-m", f"Rename the {old} voice to {new}", "--",
+            *[str(p) for p in moved], *[str(p.with_name(old + p.suffix)) for p in moved])
+    swapped = swap_voice(old, new)
+    return True, f"renamed to {new}" + (f", and in {swapped} saved file{'s' * (swapped != 1)}" if swapped else "")
+
+
+def _swap(node, old: str, new: str):
+    if isinstance(node, dict):
+        return {k: (new if k in ("voice", "left", "right") and v == old else _swap(v, old, new))
+                for k, v in node.items()}
+    if isinstance(node, list):
+        return [_swap(v, old, new) for v in node]
+    if isinstance(node, str):
+        return node.replace(f"[{old}]", f"[{new}]")
+    return node
+
+
+def swap_voice(old: str, new: str) -> int:
+    """Point saved articles and conversations at a voice's new name. Returns how many changed."""
+    changed = 0
+    for folder in (CONVERSATIONS, ARTICLES):
+        for f in folder.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            fixed = _swap(data, old, new)
+            if fixed != data:
+                f.write_text(json.dumps(fixed, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+                changed += 1
+    return changed
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -175,7 +289,10 @@ class Handler(BaseHTTPRequestHandler):
             status = jarvis.request({"cmd": "ping"}, timeout=2)
             self.send_json({"running": bool(status), **(status or {})})
         elif self.path == "/api/voices":
-            self.send_json({"voices": sorted(list_voices()), "loose": loose_voices()})
+            known = sorted(list_voices())
+            loose = loose_voices()
+            in_repo = [v for v in known if tracked(voice_files([v]))]
+            self.send_json({"voices": known, "loose": loose, "tracked": in_repo})
         elif self.path == "/api/conversations":
             found = []
             for f in CONVERSATIONS.glob("*.json"):
@@ -287,23 +404,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
             shown = out.relative_to(ROOT) if out.is_relative_to(ROOT) else out
             self.send_json({"ok": True, "file": str(shown), "seconds": resp.get("seconds")})
-        elif self.path == "/api/voices/commit":
-            # Commit a voice's clip and transcript, and nothing else that's lying around.
+        elif self.path in ("/api/voices/commit", "/api/voices/untrack", "/api/voices/delete",
+                           "/api/voices/rename"):
+            # Every one of these moves the clip and its transcript together.
             known = list_voices()
             names = [v for v in (body.get("voices") or []) if isinstance(v, str)]
+            if self.path.endswith("/rename"):
+                names = [str(body.get("voice") or "")]
             missing = [v for v in names if v not in known]
             if not names or missing:
-                return self.send_json({"ok": False, "error": f"no such voice: {', '.join(missing) or '(none given)'}"}, 400)
-            files = [str(p) for p in voice_files(names)]
-            added = git("add", "--", *files)
-            if added.returncode:
-                return self.send_json({"ok": False, "error": added.stderr.strip()[:200]}, 500)
-            what = f"the {names[0]} voice" if len(names) == 1 else f"{len(names)} voices: {', '.join(names)}"
-            done = git("commit", "-m", f"Add {what}", "--", *files)
-            if done.returncode:
-                return self.send_json({"ok": False, "error": (done.stdout + done.stderr).strip()[:200]}, 500)
-            self.send_json({"ok": True, "committed": names,
-                            "commit": git("log", "--oneline", "-1").stdout.strip()})
+                return self.send_json(
+                    {"ok": False, "error": f"no such voice: {', '.join(missing) or '(none given)'}"}, 400)
+            if self.path.endswith("/rename"):
+                ok, detail = rename_voice(names[0], str(body.get("name") or "").strip().lower())
+            elif self.path.endswith("/untrack"):
+                ok, detail = untrack_voices(names)
+            elif self.path.endswith("/delete"):
+                ok, detail = delete_voices(names)
+            else:
+                ok, detail = commit_voices(names)
+            self.send_json({"ok": ok, "voices": names, "detail": detail, "error": "" if ok else detail},
+                           200 if ok else 400)
         elif self.path == "/api/post":
             # The article, as Markdown, into posts/ — the text as it reads, marks and all.
             # With an id, it writes that same file again; without one, it takes a free name.
