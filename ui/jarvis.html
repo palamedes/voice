@@ -20,6 +20,9 @@
   h1 { font-size: 1.2rem; margin: 0 .4rem 0 0; }
   h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
        color: var(--muted); margin: 0 0 .6rem; }
+  h2.head { display: flex; align-items: center; gap: .4rem; }
+  h2.head button { text-transform: none; letter-spacing: 0; font-size: .75rem; padding: .1rem .45rem; }
+  .menu hr { border: none; border-top: 1px solid var(--line); margin: .2rem .3rem; }
   .pill { padding: .2rem .75rem; border-radius: 999px; font-size: .85rem;
           background: var(--line); color: var(--muted); }
   .pill.ok { background: #12352a; color: var(--ok); }
@@ -222,7 +225,8 @@
 
 <main>
   <section>
-    <h2>Voices</h2>
+    <h2 class="head">Voices <span class="spacer"></span>
+      <button id="push" type="button" class="small" title="Push this branch to GitHub">up to date</button></h2>
     <input id="search" type="search" placeholder="Filter…" aria-label="Filter voices">
     <ul id="voices"></ul>
     <button id="reload" type="button" class="small">Reload list</button>
@@ -450,7 +454,34 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- voices ---------------------------------------------------------------------------
+// The push button by the Voices heading: how far this branch is ahead of GitHub.
+async function loadRepo() {
+  let repo;
+  try { repo = await api("/api/repo"); } catch { repo = null; }
+  const button = $("#push");
+  const ahead = (repo && repo.ahead) || 0;
+  button.textContent = !repo || !repo.tracking ? "no remote" : ahead ? `↑${ahead} push` : "up to date";
+  button.disabled = !ahead;
+  button.title = !repo ? "Can't reach the page's server"
+    : !repo.tracking ? `${repo.branch} isn't tracking a remote branch`
+    : `${ahead} to push, ${repo.behind} to pull · ${repo.branch} → ${repo.remote}`;
+  return repo;
+}
+
+$("#push").addEventListener("click", async () => {
+  const repo = await loadRepo();
+  if (!repo || !repo.ahead) return;
+  if (!confirm(`Push ${repo.ahead} commit${repo.ahead === 1 ? "" : "s"} from ${repo.branch} to `
+               + `${repo.remote}?\n\nWhatever is in them becomes visible to anyone who can see that repo.`)) return;
+  $("#push").disabled = true;
+  $("#push").textContent = "pushing…";
+  const reply = await api("/api/repo/push", {}).catch(() => ({ error: "The page's server isn't running" }));
+  toast(reply.ok ? `Pushed ${reply.detail}` : outdated(reply.error) || reply.error || "Couldn't push");
+  loadRepo();
+});
+
 async function loadVoices() {
+  loadRepo();
   try {
     const reply = await api("/api/voices");
     voices = reply.voices;
@@ -545,11 +576,36 @@ function showMenu(event, label, members) {
     item(one ? `Rename ${one}…` : `Rename one voice at a time`, Boolean(one), () => renameVoice(one)),
     item(one ? `Delete ${one}…` : `Delete one voice at a time`, Boolean(one), () => deleteVoice(one)),
     el("p", { class: "menu-note" }, "The clip and its transcript move together. Nothing is pushed."),
+    el("hr"),
+    item(one && hereNow() ? `Play ¶${paraIndex(hereNow().id) + 1} in ${one}`
+      : one ? "No line to play" : "Play a line — pick one voice",
+      Boolean(one && hereNow()), () => playLineAs(one)),
   ]);
   document.body.append(menu);
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.min(event.clientX, window.innerWidth - box.width - 8)}px`;
   menu.style.top = `${Math.min(event.clientY, window.innerHeight - box.height - 8)}px`;
+}
+
+// The paragraph you're on: where the caret last was, else where reading left off, else the
+// first one. Only in the Article view — the conversation has no "current line".
+function hereNow() {
+  if (state.mode !== "article") return null;
+  return article.paras[paraIndex(caretPara)] || article.paras[paraIndex(article.resumeId)]
+    || article.paras[0] || null;
+}
+
+// Hear the paragraph you're on in some other voice, without changing who reads the article.
+async function playLineAs(voice) {
+  closeMenu();
+  const para = hereNow();
+  if (!para || !para.text.trim()) return toast("No line to play");
+  if (!ready) return toast("Start Jarvis first (top left)");
+  const reply = await api("/api/say", { voice, text: para.text, markdown: true, queue: true,
+                                        my_breaths: article.myBreaths, rate: article.rate })
+    .catch(() => OFFLINE);
+  if (!reply.ok && !reply.skipped) return toast(reply.error || "Jarvis didn't answer");
+  toast(`${labelFor(voice)} reads ¶${paraIndex(para.id) + 1}`);
 }
 
 async function voiceAction(what, names, said) {
@@ -1159,6 +1215,7 @@ const paraNodes = new Map();     // paragraph id -> its elements, reused across 
 const reader = { doc: null, active: false, run: 0, currentId: 0, next: null, pauseAfter: false,
                  sentId: 0, warned: new Set(), read: new Set(), stopping: null };
 let rawMode = !article.paras.length;
+let caretPara = 0;          // the paragraph the caret was last in
 let saveTimer;
 const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); };
 
@@ -1376,6 +1433,7 @@ function paraNode(para) {
       toast("Jarvis already has this paragraph: press ⟳ afterwards to hear your change");
     }
   });
+  text.addEventListener("focus", () => { caretPara = id; });
   text.addEventListener("blur", () => commitParagraph(id));
   // Enter: split into a new paragraph at the caret. Alt+Enter: a new empty paragraph below.
   // Shift+Enter: a line break inside this one. Ctrl+Enter: play it. Backspace at the very

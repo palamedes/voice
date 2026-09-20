@@ -167,7 +167,11 @@ character in a story or a D&D session its own voice:
   it, **take it out of the repo** (the files stay where they are), **rename**
   it, or **delete** it. The clip and its transcript always move together, a
   rename also fixes the name in saved articles and conversations (including
-  `[voice]` switches in their text), and none of it pushes.
+  `[voice]` switches in their text), and none of it pushes. At the foot of that
+  menu, **play the paragraph you're on** in that voice, without changing who
+  reads the article — handy for trying a line in someone else's voice. The
+  button beside the **Voices** heading shows how far this branch is ahead of
+  GitHub (`↑3 push`) and pushes it, naming the branch and remote first.
 - **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
   press Enter, and Jarvis says it in that voice. **→** (or Ctrl+Enter) puts the
   line into the conversation instead, without changing the left and right

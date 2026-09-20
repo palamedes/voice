@@ -126,6 +126,20 @@ def tracked(paths: list[Path]) -> list[Path]:
     return [p for p in paths if str(p.relative_to(ROOT)) in known]
 
 
+def repo_state() -> dict:
+    """Where this branch stands against its remote — counted locally, without fetching."""
+    upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    tracking = "" if upstream.returncode else upstream.stdout.strip()
+    ahead = behind = 0
+    if tracking:
+        counts = git("rev-list", "--left-right", "--count", f"{tracking}...HEAD").stdout.split()
+        if len(counts) == 2:
+            behind, ahead = int(counts[0]), int(counts[1])
+    return {"branch": git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+            "tracking": tracking, "ahead": ahead, "behind": behind,
+            "remote": git("remote", "get-url", "origin").stdout.strip()}
+
+
 def loose_voices() -> list[str]:
     """Voices that aren't safely in the repo: a clip or transcript that git doesn't have,
     or has but that's changed since. Named by file, as list_voices names them."""
@@ -310,6 +324,8 @@ class Handler(BaseHTTPRequestHandler):
                               "lines": len(data.get("lines") or [])})
             found.sort(key=lambda c: c["name"].casefold())
             self.send_json({"conversations": found})
+        elif self.path == "/api/repo":
+            self.send_json(repo_state())
         elif self.path == "/api/articles":
             found = []
             for f in ARTICLES.glob("*.json"):
@@ -410,6 +426,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
             shown = out.relative_to(ROOT) if out.is_relative_to(ROOT) else out
             self.send_json({"ok": True, "file": str(shown), "seconds": resp.get("seconds")})
+        elif self.path == "/api/repo/push":
+            # The one thing here that leaves this machine; the page asks first.
+            state = repo_state()
+            if not state["ahead"]:
+                return self.send_json({"ok": False, "error": "nothing to push"}, 400)
+            out = git("push", timeout=180)
+            if out.returncode:
+                return self.send_json({"ok": False, "error": (out.stdout + out.stderr).strip()[-200:]}, 500)
+            pushed = state["ahead"]
+            self.send_json({"ok": True, "detail": f"{pushed} commit{'s' * (pushed != 1)} to {state['branch']}",
+                            **repo_state()})
         elif self.path in ("/api/voices/commit", "/api/voices/untrack", "/api/voices/delete",
                            "/api/voices/rename"):
             # Every one of these moves the clip and its transcript together.
