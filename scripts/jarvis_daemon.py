@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 SOCK_PATH = os.environ.get("JARVIS_SOCK", "/tmp/jarvis.sock")
 LOG_PATH = os.environ.get("JARVIS_LOG", "/tmp/jarvis.log")
-DEFAULT_VOICE = "presenter"
+DEFAULT_VOICE = "jason-ellis-presenter"
 # Speech level (int16 dB scale, as index_speak.speech_level_db measures it) that
 # every voice is brought to — about where a loudness-normalized ./speak render sits.
 TARGET_LEVEL_DB = 74.0

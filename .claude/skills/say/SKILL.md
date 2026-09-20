@@ -27,8 +27,8 @@ Keep it a single invocation beginning with
 - **Engine**: Breeze TTS 2 by default (the script re-launches itself in Breeze's venv;
   same command, still auto-approved); add `--indextts` for IndexTTS-2 when asked.
 - **Voice + window**: `--voice NAME` (`--list-voices`), or any voice name as a
-  bare flag (`--calm`, `--muted`, `--presenter`, ...); `--ref-start SECS`,
-  `--ref-secs SECS` (max 15s). Default voice `presenter`.
+  bare flag (`--jason-ellis-calm`, `--art-bell`, ...); `--ref-start SECS`,
+  `--ref-secs SECS` (max 15s). Default voice `jason-ellis-presenter`.
 - **Delivery**: `--emotion neutral|happy|sad|angry`, `--rate 0.9` (slower),
   `--sentence-gap`/`--para-gap`/`--breath-gap` (ms). Pacing marks typed in the
   text are honored: `,,,` = breathe here, `[pause]`, `[pause 1.5]` — pass them

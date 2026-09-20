@@ -70,7 +70,7 @@ plain mode, e.g. to compare if a render ever sounds off.
 
 Breeze needs the exact words of the reference clip. The first time you use a
 voice with it, Whisper transcribes the clip and saves the words next to it
-(e.g. `voice_samples/processed/presenter.txt`); if Whisper got a word wrong,
+(e.g. `voice_samples/jason-ellis-presenter.txt`); if Whisper got a word wrong,
 fix the file.
 
 ### Breeze sounds: the full list
@@ -216,7 +216,7 @@ that side):
  "lines": [
   {"side": "left", "text": "(grunts) You. Bard. Play something that isn't terrible."},
   {"side": "right", "text": "For you? Anything."},
-  {"side": "guest", "voice": "presenter", "text": "The barkeep sighs and reaches for the club."}
+  {"side": "guest", "voice": "jason-ellis-presenter", "text": "The barkeep sighs and reaches for the club."}
  ]
 }
 ```
@@ -257,8 +257,9 @@ While it's reading, either one goes next instead of cutting anything off.
   new empty paragraph above it); **Alt+Enter** adds an empty paragraph right
   below, wherever the caret is; **Shift+Enter** is a line break inside the
   paragraph (with only my breaths, a breath); **Backspace** at the very start of
-  a paragraph joins it onto the end of the one above. Emptying a paragraph
-  removes it.
+  a paragraph joins it onto the end of the one above; **↑** and **↓** carry on
+  into the paragraph above or below when there's no more room in this one.
+  Emptying a paragraph removes it.
   **Edit as text** shows the whole article in one box for big changes.
 - **One paragraph in another voice:** hover it and click the name under ¶N on
   the left, then pick a voice ("Article reader" undoes it). It applies to that
@@ -304,17 +305,16 @@ do what they say.
 ./speak --list-voices
 ```
 
-A "voice" is just an audio file in `voice_samples/` or
-`voice_samples/processed/` — its name is the filename without the extension.
-The default is `presenter`.
+A "voice" is just an audio file in `voice_samples/` — its name is the filename
+without the extension. The default is `jason-ellis-presenter`.
 
 ### Use a voice
 
 Any listed voice name works as a bare flag, or via `--voice`:
 
 ```sh
-./speak --calm "Same me, calmer read."
-./speak --voice muted --file posts/my-post.md
+./speak --jason-ellis-calm "Same me, calmer read."
+./speak --voice jason-ellis-muted --file posts/my-post.md
 ```
 
 ### Switch voices mid-text (conversations)
@@ -354,7 +354,7 @@ And this line is still Art Bell.
 2. Clean it into a reference clip:
 
    ```sh
-   scripts/prep_ref.sh SOURCE.mp4 0 12 voice_samples/processed/myvoice.wav
+   scripts/prep_ref.sh SOURCE.mp4 0 12 voice_samples/myvoice.wav
    #                   input      │ │  output — filename becomes the voice name
    #                        start ┘ └ seconds to keep
    ```
@@ -370,17 +370,6 @@ transcript is the one Breeze makes for itself. If a voice sounds off, fix the
 clip: re-record, or slice a better
 window from the source with different start/duration values. The model
 ignores everything past 15 seconds, so longer is never better.
-
-### What's the difference between `voice_samples/` and `voice_samples/processed/`?
-
-- `voice_samples/` — raw source recordings, kept as-is (any format).
-- `voice_samples/processed/` — cleaned reference clips made by
-  `prep_ref.sh`: trimmed, mono, 24 kHz, loudness-normalized, noise-reduced.
-
-Both folders show up in `--list-voices` and both work, but processed clips
-sound better because the model gets a clean, consistent input. Convention:
-keep the raw recording in `voice_samples/`, put the cleaned clip you actually
-speak with in `processed/` under a short name (`calm`, `muted`, `presenter`).
 
 ## Common tasks
 
@@ -465,8 +454,8 @@ silence is removed; the voice itself isn't touched.
   --indextts / --engine NAME  breeze (Breeze TTS 2, default) or indextts (IndexTTS-2)
   --no-fast                   Breeze: skip fast mode (on by default: ~9 s
                               warm-up, then ~5x faster rendering)
-  --voice NAME                reference voice (default: presenter); any name
-                              also works as a bare flag: --calm, --muted, ...
+  --voice NAME                reference voice (default: jason-ellis-presenter);
+                              any name also works as a bare flag: --art-bell, ...
   --ref PATH                  explicit reference clip path (overrides --voice)
   --ref-start / --ref-secs    which window of the reference to use (max 15s)
   --list-voices               list voices and exit
@@ -533,7 +522,7 @@ articles/                 articles open in the Jarvis page (JSON, saved as you t
 scripts/merge_audio.py    join two clips with a natural pause
 scripts/prep_ref.sh       clean a reference clip out of any audio/video
 scripts/audio_common.py   shared helpers (markdown stripping, normalization, pacing marks)
-voice_samples/            raw voice recordings (+ processed/ cleaned clips)
+voice_samples/            the reference clips (+ a .txt transcript beside each)
 posts/                    blog posts to read (.md or .txt)
 output/                   generated audio
 .claude/skills/           the slash commands (this project only)

@@ -22,7 +22,7 @@ Run with the IndexTTS venv:
   index-tts/.venv/bin/python scripts/index_speak.py \
       --file posts/ai-slop-youtube.md --out output/ai-slop-youtube_index.wav
 
-Reference voice: a single clean clip works best (default: presenter).
+Reference voice: a single clean clip works best (default: jason-ellis-presenter).
 Emotion (optional): --emotion neutral|happy|sad|angry (subtle by default).
 """
 import argparse
@@ -43,7 +43,8 @@ from audio_common import normalize_loudness, pacing_plan, strip_markdown
 # IndexTTS-2 internally truncates the speaker reference to 15s, so there's no
 # point feeding it more. We pick which <=15s window to use via --ref-start/--ref-secs.
 MAX_REF_SECS = 15.0
-VOICE_DIRS = ("voice_samples", "voice_samples/processed")
+DEFAULT_VOICE = "jason-ellis-presenter"
+VOICE_DIRS = ("voice_samples",)
 AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4", ".mov")
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,12 +70,12 @@ def list_voices():
             continue
         for f in sorted(base.iterdir()):
             if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
-                found.setdefault(f.stem, f)  # first dir wins; processed is secondary
+                found.setdefault(f.stem, f)
     return found
 
 
 def expand_voice_shorthand(argv):
-    """Allow engine and voice names as bare flags: --breeze, --indextts, --calm, --muted, ...
+    """Allow engine and voice names as bare flags: --breeze, --indextts, --art-bell, ...
     Rewrites them to --engine <name> / --voice <name> before argparse sees them."""
     voices = list_voices()
     out = []
@@ -96,7 +97,7 @@ def resolve_ref(ref, voice):
     voices = list_voices()
     if voice:
         return voices.get(voice)
-    return voices.get("presenter")  # default voice
+    return voices.get(DEFAULT_VOICE)
 
 
 def trim_ref(src: Path, start: float, secs):
@@ -460,7 +461,7 @@ def main() -> int:
                     help="Breeze only, on by default: ~9 s of CUDA-graph warm-up, then roughly 5x faster "
                          "rendering. --no-fast uses Breeze's plain (eager) path.")
     ap.add_argument("--voice", help="Reference voice by name (see --list-voices). Any voice name "
-                    "also works as a bare flag, e.g. --calm. Default: presenter.")
+                    "also works as a bare flag, e.g. --art-bell. Default: jason-ellis-presenter.")
     ap.add_argument("--ref", type=Path, help="Explicit reference clip path (overrides --voice).")
     ap.add_argument("--ref-start", type=float, default=0.0,
                     help="Seconds into the reference to start listening (e.g. skip an intro).")
@@ -530,7 +531,7 @@ def main() -> int:
 
     base_ref = resolve_ref(args.ref, args.voice)
     if base_ref is None:
-        which = args.ref or args.voice or "presenter"
+        which = args.ref or args.voice or DEFAULT_VOICE
         print(f"ERROR: reference voice not found: {which}  (try --list-voices)", file=sys.stderr)
         return 1
 

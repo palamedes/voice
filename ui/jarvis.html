@@ -301,9 +301,10 @@
       placeholder="Paste an article here (Markdown is fine). Blank lines separate the paragraphs."></textarea>
     <div id="paras" aria-label="Article paragraphs"></div>
     <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
-      ▶ read on from here · ⟳ play just this one (Ctrl+Enter); while it's reading, either one goes next.
+      ▶ read on from here (Ctrl+click it for just that one) · ⟳ play just this one (Ctrl+Enter);
+      while it's reading, either one goes next.
       Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one,
-      Backspace at the very start joins it onto the one above.
+      Backspace at the very start joins it onto the one above, and ↑ ↓ step into the paragraph above or below.
       The name under ¶ picks who reads that one paragraph;
       a [voice] switch typed in the text carries on until the next one.</div>
   </section>
@@ -1367,6 +1368,10 @@ function paraNode(para) {
   // start: join this paragraph onto the end of the one above.
   text.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (window.getSelection().isCollapsed && stepParagraph(id, e.key === "ArrowUp")) e.preventDefault();
+      return;
+    }
     if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (window.getSelection().isCollapsed && caretOffset(text) === 0 && paraIndex(id) > 0) {
         e.preventDefault();
@@ -1390,7 +1395,8 @@ function paraNode(para) {
     el("div", { class: "gutter" }, [
       el("div", { class: "gtop" }, [
         el("div", { class: "ptools" }, [
-          tool("▶", "Read on from here", () => read(id)),
+          tool("▶", "Read on from here (Ctrl+click: just this one)",
+               (e) => read(id, e.ctrlKey || e.metaKey)),
           tool("⟳", "Play just this paragraph (Ctrl+Enter)", () => read(id, true)),
         ]),
         num,
@@ -1453,6 +1459,38 @@ function addParagraphAfter(id) {
   save();
   renderArticle();
   focusParagraph(fresh.id);
+}
+
+// ↑ on the top line of a paragraph (or ↓ on the bottom one) carries on into the paragraph
+// above or below, landing in about the same column rather than at the very end.
+function stepParagraph(id, up) {
+  const index = paraIndex(id);
+  const next = article.paras[index + (up ? -1 : 1)];
+  const node = paraNodes.get(id);
+  if (!next || !node || !paraNodes.has(next.id)) return false;
+  const here = window.getSelection().getRangeAt(0).cloneRange();
+  here.collapse(true);
+  const box = node.text.getBoundingClientRect();
+  const caret = here.getClientRects()[0] || box;
+  const line = parseFloat(getComputedStyle(node.text).lineHeight) || 20;
+  const edge = up ? caret.top - box.top < line * 0.6 : box.bottom - caret.bottom < line * 0.6;
+  if (!edge) return false;                     // still room to move inside this paragraph
+  const target = paraNodes.get(next.id).text;
+  target.focus();
+  const into = target.getBoundingClientRect();
+  const at = document.caretRangeFromPoint
+    ? document.caretRangeFromPoint(caret.left, up ? into.bottom - line * 0.4 : into.top + line * 0.4) : null;
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  if (at) {
+    selection.addRange(at);
+  } else {
+    const fallback = document.createRange();   // off-screen, or a browser without that call
+    fallback.selectNodeContents(target);
+    fallback.collapse(!up);
+    selection.addRange(fallback);
+  }
+  return true;
 }
 
 // Backspace at the very start: this paragraph joins the end of the one above (with a space

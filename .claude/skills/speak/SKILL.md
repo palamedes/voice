@@ -11,7 +11,7 @@ Generate audio of the user's text in `/home/jellis/Projects/voice`.
 Use `scripts/index_speak.py`, always launched with the `index-tts/.venv` python —
 for Breeze it re-launches itself in `breeze-tts/.venv`. Text is fed one sentence /
 marked phrase at a time with explicit pauses between. Default reference is a single
-clean clip (`voice_samples/processed/presenter.wav`). The first use of a voice
+clean clip (`voice_samples/jason-ellis-presenter.wav`). The first use of a voice
 transcribes its reference into `<voice>.txt` beside the clip (Whisper). Breeze
 performs sounds written in parentheses — `(sighs)`, `(laughs)`, `(clears throat)`,
 `(whispers)`, `(shouts)`… (34 tags; exact spellings in README "Breeze sounds") —
@@ -27,9 +27,9 @@ clones Jason well, pronounces reliably, and has emotion presets; `--emotion`/`--
 - **Text**: from the skill args, the pasted message, or a file the user names
   (e.g. `posts/foo.md`). If none present, ask: "What text should I read?"
 - **Reference voice** (which voice to clone): `--voice NAME` (run
-  `--list-voices` to see them; default `presenter`). Any voice name also works
-  as a bare flag: `--calm`, `--muted`, `--presenter`, etc. The user can say e.g.
-  "use the calm voice". For a window of a longer clip: `--ref-start SECS`
+  `--list-voices` to see them; default `jason-ellis-presenter`). Any voice name
+  also works as a bare flag: `--jason-ellis-calm`, `--art-bell`, etc. The user
+  can say e.g. "use the calm voice". For a window of a longer clip: `--ref-start SECS`
   (where to start) and `--ref-secs SECS` (how long; **max 15s** — the model caps
   there). Or `--ref PATH` for an explicit file. Example: "use ryan-reynolds,
   start at 30 seconds, listen for 12" → `--voice ryan-reynolds --ref-start 30 --ref-secs 12`.

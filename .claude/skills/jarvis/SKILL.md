@@ -17,7 +17,7 @@ breeze-tts/.venv/bin/python scripts/jarvis_daemon.py --text "<the text>"
 ```
 
 - **Voice**: add `--voice NAME` (exact name from `--list-voices`). It sticks for
-  later lines until changed; default `presenter`.
+  later lines until changed; default `jason-ellis-presenter`.
 - **Pacing / sounds**: `,,,`, `[pause 1]`, `(sighs)`, `[voice]` switches all work
   as in /speak; keep them verbatim. `--my-breaths` pauses only at marks and line
   breaks.
