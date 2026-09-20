@@ -204,19 +204,24 @@ def rename_voice(old: str, new: str) -> tuple[bool, str]:
         return False, "a voice name takes lowercase letters, numbers and dashes"
     if new in known:
         return False, f"there's already a voice called {new}"
+    # git only hears about the files it already had: naming a file it never tracked (an
+    # un-committed transcript, say) makes it refuse the whole commit.
     moved = []
     for path in voice_files([old]):
         to = path.with_name(new + path.suffix)
-        if tracked([path]):
+        in_git = bool(tracked([path]))
+        if in_git:
             out = git("mv", "--", str(path), str(to))
             if out.returncode:
                 return False, out.stderr.strip()[:200]
         else:
             path.rename(to)
-        moved.append(to)
-    if tracked(moved):
-        git("commit", "-m", f"Rename the {old} voice to {new}", "--",
-            *[str(p) for p in moved], *[str(p.with_name(old + p.suffix)) for p in moved])
+        moved.append((path, to, in_git))
+    both = [str(p) for was, to, in_git in moved if in_git for p in (was, to)]
+    if both:
+        done = git("commit", "-m", f"Rename the {old} voice to {new}", "--", *both)
+        if done.returncode:
+            return False, (done.stdout + done.stderr).strip()[:200]
     swapped = swap_voice(old, new)
     return True, f"renamed to {new}" + (f", and in {swapped} saved file{'s' * (swapped != 1)}" if swapped else "")
 
