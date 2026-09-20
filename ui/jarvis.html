@@ -150,8 +150,6 @@
   .doc-title { width: 11rem; font-weight: 600; }
   .render-range { width: 5.5rem; padding: .15rem .4rem; font-size: .85rem; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
-  .reader-now { font-size: .85rem; color: var(--muted); max-width: 16rem; overflow: hidden;
-                text-overflow: ellipsis; white-space: nowrap; }
   .pace { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--muted); }
   .pace input[type="range"] { width: 7rem; padding: 0; background: transparent; border: none; }
   #pace-value { min-width: 3.8rem; }
@@ -276,7 +274,6 @@
     </div>
     <div class="toolbar">
       <input id="article-name" class="doc-title" placeholder="Untitled" aria-label="Article name">
-      <span id="reader-now" class="reader-now" title="Pick who reads in the Voices column (shift-click to add another)"></span>
       <button id="read" type="button">▶ Read</button>
       <button id="read-top" type="button" class="small" title="Next ▶ Read starts from the top" hidden>⟲ top</button>
       <button id="read-stop" type="button" title="Stop now (Esc)" disabled>■ Stop</button>
@@ -462,7 +459,7 @@ async function loadVoices() {
   } catch { voices = []; }
   renderVoices();
   renderSides();
-  renderReader();
+  renderDocName();
   paintArticle();
 }
 
@@ -1233,7 +1230,7 @@ function openArticle(id) {
   $("#pace").value = String(article.rate);
   showPace();
   save();
-  renderReader();
+  renderDocName();
   renderVoices();
   renderArticle();
   renderDocs();
@@ -1319,12 +1316,8 @@ $("#article-name").addEventListener("input", () => {
 // Who reads this article: one voice, or several to share it out between them.
 const readersOf = (doc) => (doc.readers.length ? doc.readers : doc.voice ? [doc.voice] : []);
 
-function renderReader() {
+function renderDocName() {
   $("#article-name").value = article.name;
-  const readers = readersOf(article);
-  $("#reader-now").textContent = !readers.length ? "Pick a voice in the Voices column"
-    : readers.length === 1 ? `Read by ${labelFor(readers[0])}`
-    : `Read by ${readers.length} voices: ${readers.map(labelFor).join(", ")}`;
 }
 
 // A click picks the reader; shift-click adds another (or drops one), and the paragraphs
@@ -1338,7 +1331,7 @@ function setReader(voice, add = false) {
   article.readers = readers;
   article.voice = readers[0] || "";
   save();
-  renderReader();
+  renderDocName();
   renderVoices();
   paintArticle();
 }
@@ -1919,7 +1912,7 @@ function render() {
   renderSides();
   renderThread();
   renderSaved();
-  renderReader();
+  renderDocName();
   renderArticle();
   renderDocs();
 }
