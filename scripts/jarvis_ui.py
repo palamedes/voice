@@ -16,6 +16,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -108,6 +109,31 @@ def clean_conversation(name: str, conv: dict) -> dict:
             "cast": cast, "lines": lines}
 
 
+def git(*args, **run):
+    """Run git in the project (never through a shell)."""
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, **run)
+
+
+def loose_voices() -> list[str]:
+    """Voices that aren't safely in the repo: a clip or transcript that git doesn't have,
+    or has but that's changed since. Named by file, as list_voices names them."""
+    names = set()
+    for args in (("ls-files", "--others", "--exclude-standard"), ("ls-files", "--modified")):
+        for line in git(*args, "--", "voice_samples").stdout.splitlines():
+            names.add(Path(line).stem)
+    return sorted(names & set(list_voices()))
+
+
+def voice_files(names: list[str]) -> list[Path]:
+    """Every file that makes up these voices: the clip, and the transcript beside it."""
+    known = list_voices()
+    files = []
+    for name in names:
+        clip = known[name]
+        files += [p for p in (clip, clip.with_suffix(".txt")) if p.exists()]
+    return files
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # keep the terminal quiet
@@ -149,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             status = jarvis.request({"cmd": "ping"}, timeout=2)
             self.send_json({"running": bool(status), **(status or {})})
         elif self.path == "/api/voices":
-            self.send_json({"voices": sorted(list_voices())})
+            self.send_json({"voices": sorted(list_voices()), "loose": loose_voices()})
         elif self.path == "/api/conversations":
             found = []
             for f in CONVERSATIONS.glob("*.json"):
@@ -261,6 +287,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(resp or {"ok": False, "error": "Jarvis isn't running"}, 503)
             shown = out.relative_to(ROOT) if out.is_relative_to(ROOT) else out
             self.send_json({"ok": True, "file": str(shown), "seconds": resp.get("seconds")})
+        elif self.path == "/api/voices/commit":
+            # Commit a voice's clip and transcript, and nothing else that's lying around.
+            known = list_voices()
+            names = [v for v in (body.get("voices") or []) if isinstance(v, str)]
+            missing = [v for v in names if v not in known]
+            if not names or missing:
+                return self.send_json({"ok": False, "error": f"no such voice: {', '.join(missing) or '(none given)'}"}, 400)
+            files = [str(p) for p in voice_files(names)]
+            added = git("add", "--", *files)
+            if added.returncode:
+                return self.send_json({"ok": False, "error": added.stderr.strip()[:200]}, 500)
+            what = f"the {names[0]} voice" if len(names) == 1 else f"{len(names)} voices: {', '.join(names)}"
+            done = git("commit", "-m", f"Add {what}", "--", *files)
+            if done.returncode:
+                return self.send_json({"ok": False, "error": (done.stdout + done.stderr).strip()[:200]}, 500)
+            self.send_json({"ok": True, "committed": names,
+                            "commit": git("log", "--oneline", "-1").stdout.strip()})
         elif self.path == "/api/post":
             # The article, as Markdown, into posts/ — the text as it reads, marks and all.
             # With an id, it writes that same file again; without one, it takes a free name.

@@ -154,8 +154,13 @@ character in a story or a D&D session its own voice:
   quit from the command line.) The two buttons on the right switch between the
   **Panel + Conversation** view (described here) and the **Article** view
   (below).
-- **Voices:** every voice in `voice_samples/`. Click one to add it to the
-  panel; drop new clips into `voice_samples/` and press Reload.
+- **Voices:** every voice in `voice_samples/`, folded by person — one line per
+  name (`dennis-prager-1` and `-2` become **Dennis Prager**, 2 inside), which
+  you open, close, and 📌 pin to the top of the list. Click a voice to add it to
+  the panel (or, in the Article view, to read the article); drop new clips into
+  `voice_samples/` and press Reload. A blue dot means that clip isn't in the
+  repo yet — right-click it (or the person) to commit the clip and its
+  transcript. Committing doesn't push.
 - **Panel:** one card per speaker. Rename it ("Grukk the Orc"), type a line,
   press Enter, and Jarvis says it in that voice. **→** (or Ctrl+Enter) puts the
   line into the conversation instead, without changing the left and right
@@ -244,7 +249,9 @@ While it's reading, either one goes next instead of cutting anything off.
 - **Enter** starts a new paragraph at the caret (at the very start of one, a
   new empty paragraph above it); **Alt+Enter** adds an empty paragraph right
   below, wherever the caret is; **Shift+Enter** is a line break inside the
-  paragraph (with only my breaths, a breath). Emptying a paragraph removes it.
+  paragraph (with only my breaths, a breath); **Backspace** at the very start of
+  a paragraph joins it onto the end of the one above. Emptying a paragraph
+  removes it.
   **Edit as text** shows the whole article in one box for big changes.
 - **One paragraph in another voice:** hover it and click the name under ¶N on
   the left, then pick a voice ("Article reader" undoes it). It applies to that

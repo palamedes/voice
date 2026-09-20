@@ -51,11 +51,27 @@
   #voices li { display: flex; justify-content: space-between; align-items: center; gap: .4rem;
                padding: .3rem .2rem; border-bottom: 1px solid var(--line); }
   .vname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .vpick { flex: 1; display: flex; align-items: center; gap: .4rem; min-width: 0; text-align: left;
+  .vpick, .vgroup { flex: 1; display: flex; align-items: center; gap: .4rem; min-width: 0; text-align: left;
            background: transparent; border: 1px solid transparent; padding: .25rem .4rem; }
-  .vpick:hover:not(:disabled) { background: var(--card); border-color: var(--line); }
+  .vpick:hover:not(:disabled), .vgroup:hover { background: var(--card); border-color: var(--line); }
   .vpick[aria-checked="true"] { background: #1b2540; border-color: var(--accent); }
   .vcheck { width: 1rem; flex: none; color: var(--accent); font-weight: 700; }
+  .vchev { width: .7rem; flex: none; color: var(--muted); font-size: .8rem; }
+  .vcount { color: var(--muted); font-size: .78rem; flex: none; }
+  .vpin { flex: none; background: transparent; border: none; padding: .1rem .3rem; opacity: 0;
+          filter: grayscale(1); font-size: .8rem; }
+  #voices li:hover .vpin, .vpin.on { opacity: 1; }
+  .vpin.on { filter: none; }
+  .vdot { flex: none; color: var(--accent); font-size: .6rem; line-height: 1; }
+  .menu { position: fixed; z-index: 20; min-width: 12rem; padding: .25rem; display: grid; gap: .1rem;
+          background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+  .menu button { width: 100%; text-align: left; background: transparent; border: none;
+                 padding: .35rem .6rem; font-size: .85rem; border-radius: 6px; }
+  .menu button:hover:not(:disabled) { background: var(--card); }
+  .menu .menu-note { padding: .2rem .6rem .35rem; font-size: .75rem; color: var(--muted); }
+  #voices li.vchild { padding-left: 1.1rem; }
+  #voices li.pin-end { border-bottom: 2px solid var(--line); }
 
   /* panel */
   #panel { overflow: auto; display: grid; gap: .6rem; align-content: start; flex: 1; }
@@ -286,7 +302,8 @@
     <div id="paras" aria-label="Article paragraphs"></div>
     <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
       ▶ read on from here · ⟳ play just this one (Ctrl+Enter); while it's reading, either one goes next.
-      Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one.
+      Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one,
+      Backspace at the very start joins it onto the one above.
       The name under ¶ picks who reads that one paragraph;
       a [voice] switch typed in the text carries on until the next one.</div>
   </section>
@@ -332,12 +349,16 @@ const saved = loadState();
 if (saved.v !== VERSION) saved.autospeak = false;   // "speak as I add" now starts off
 const state = Object.assign(
   { panel: [], left: "", right: "", lines: [], side: "left", autospeak: false,
-    name: "", convId: "", savedSnap: "", mode: "scene" }, saved, { v: VERSION });
+    name: "", convId: "", savedSnap: "", mode: "scene", voicePins: [], voiceOpen: [] }, saved, { v: VERSION });
+for (const key of ["voicePins", "voiceOpen"]) {
+  state[key] = Array.isArray(state[key]) ? state[key].filter((k) => typeof k === "string") : [];
+}
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage blocked */ }
 }
 
 let voices = [];
+let loose = new Set();      // voices whose files aren't committed (a dot in the list)
 let ready = false;
 let startingSince = 0;
 const starting = () => Date.now() - startingSince < 60000;
@@ -430,41 +451,176 @@ document.addEventListener("keydown", (e) => {
 
 // ---- voices ---------------------------------------------------------------------------
 async function loadVoices() {
-  try { voices = (await api("/api/voices")).voices; } catch { voices = []; }
+  try {
+    const reply = await api("/api/voices");
+    voices = reply.voices;
+    loose = new Set(reply.loose || []);     // clips git hasn't got yet
+  } catch { voices = []; }
   renderVoices();
   renderSides();
   renderReader();
   paintArticle();
 }
 
+// Voice names run first-last-variant (jason-ellis-presenter, dennis-prager-1), so one
+// person's variants fold into a folder you can open, close, and pin to the top.
+function groupOf(voice) {
+  const parts = voice.split("-");
+  if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1])) return parts.slice(0, -1).join("-");
+  return parts.length > 2 ? parts.slice(0, 2).join("-") : voice;
+}
+const titleCase = (key) => key.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+const variantOf = (voice, key) => (voice === key ? voice : voice.slice(key.length + 1));
+
+// The voices as folders, pinned ones first, then the rest by name. A search keeps only
+// what matches (by person or by voice) and opens whatever it finds.
+function voiceGroups(query) {
+  const groups = new Map();
+  for (const voice of voices) {
+    const key = groupOf(voice);
+    groups.set(key, [...(groups.get(key) || []), voice]);
+  }
+  let found = [...groups].map(([key, members]) => ({ key, members }));
+  if (query) {
+    found = found
+      .map((g) => (titleCase(g.key).toLowerCase().includes(query) ? g
+        : { ...g, members: g.members.filter((v) => v.toLowerCase().includes(query)) }))
+      .filter((g) => g.members.length);
+  }
+  const rank = (g) => {
+    const at = state.voicePins.indexOf(g.key);
+    return at < 0 ? state.voicePins.length : at;
+  };
+  return found.sort((a, b) => rank(a) - rank(b) || a.key.localeCompare(b.key));
+}
+
+// A dot for a voice git hasn't got yet (right-click the row to commit it).
+const looseDot = (members) => (members.some((v) => loose.has(v))
+  ? [el("span", { class: "vdot", title: "Not in the repo yet — right-click to commit" }, "●")] : []);
+
+// One voice: picks who reads in the Article view, adds it to the panel otherwise.
+function voiceButton(voice, label, reading) {
+  if (reading) {
+    const on = voice === article.voice;
+    return el("button", { type: "button", class: "vpick", role: "radio", "aria-checked": String(on),
+                          title: on ? "Reading the article" : `Have ${voice} read the article`,
+                          onclick: () => setReader(voice) },
+              [el("span", { class: "vcheck", "aria-hidden": "true" }, on ? "✓" : ""),
+               el("span", { class: "vname", title: voice }, label), ...looseDot([voice])]);
+  }
+  const added = state.panel.some((m) => m.voice === voice);
+  return el("button", { type: "button", class: "vpick",
+                        title: added ? "Already on the panel" : `Add ${voice} to the panel`,
+                        onclick: () => addToPanel(voice) },
+            [el("span", { class: "vcheck", "aria-hidden": "true" }, added ? "✓" : "+"),
+             el("span", { class: "vname", title: voice }, label), ...looseDot([voice])]);
+}
+
+// ---- right-click a voice (or a person) to commit its clips ------------------------------
+function closeMenu() {
+  const open = $("#voice-menu");
+  if (open) open.remove();
+}
+
+function showMenu(event, label, members) {
+  event.preventDefault();
+  closeMenu();
+  const waiting = members.filter((v) => loose.has(v));
+  const item = el("button", { type: "button", role: "menuitem", onclick: () => commitVoices(waiting) },
+                  waiting.length > 1 ? `Commit ${waiting.length} clips of ${label}`
+                    : waiting.length ? `Commit ${waiting[0]}` : `${label} is already committed`);
+  item.disabled = !waiting.length;
+  const menu = el("div", { id: "voice-menu", class: "menu", role: "menu" }, [
+    item,
+    el("p", { class: "menu-note" }, waiting.length
+      ? "Adds the clip and its transcript to the repo. It doesn't push." : "Nothing to commit."),
+  ]);
+  document.body.append(menu);
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - box.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - box.height - 8)}px`;
+}
+
+async function commitVoices(names) {
+  closeMenu();
+  if (!names.length) return;
+  const reply = await api("/api/voices/commit", { voices: names })
+    .catch(() => ({ error: "The page's server isn't running" }));
+  if (!reply.ok) return toast(outdated(reply.error) || reply.error || "Couldn't commit it");
+  toast(`Committed ${reply.commit} — push when you're ready`);
+  loadVoices();
+}
+document.addEventListener("click", closeMenu);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+
+function togglePin(key) {
+  const at = state.voicePins.indexOf(key);
+  if (at < 0) state.voicePins.unshift(key);
+  else state.voicePins.splice(at, 1);
+  save();
+  renderVoices();
+}
+
+function toggleGroup(key) {
+  const at = state.voiceOpen.indexOf(key);
+  if (at < 0) state.voiceOpen.push(key);
+  else state.voiceOpen.splice(at, 1);
+  save();
+  renderVoices();
+}
+
 function renderVoices() {
   const query = $("#search").value.trim().toLowerCase();
-  const shown = voices.filter((v) => v.toLowerCase().includes(query));
-  const list = $("#voices");
-  // In the Article view each voice is a choice of who reads the article (✓ marks the
-  // reader); otherwise its button adds it to the panel.
   const reading = state.mode === "article";
+  const list = $("#voices");
   list.setAttribute("role", reading ? "radiogroup" : "list");
   list.setAttribute("aria-label", reading ? "Who reads the article" : "Voices");
-  list.replaceChildren(...shown.map((voice) => {
-    if (reading) {
-      const on = voice === article.voice;
-      return el("li", { role: "none" }, el("button", {
-        type: "button", class: "vpick", role: "radio", "aria-checked": String(on),
-        title: on ? "Reading the article" : "Have this voice read the article", onclick: () => setReader(voice),
-      }, [el("span", { class: "vcheck", "aria-hidden": "true" }, on ? "✓" : ""),
-          el("span", { class: "vname" }, voice)]));
+  const groups = voiceGroups(query);
+  const rows = [];
+  groups.forEach((group, i) => {
+    const pinned = state.voicePins.includes(group.key);
+    const open = Boolean(query) || state.voiceOpen.includes(group.key);
+    const next = groups[i + 1];
+    const cls = (extra) => "vrow" + extra + (pinned && !(next && state.voicePins.includes(next.key)) ? " pin-end" : "");
+    const pin = el("button", { type: "button", class: "vpin" + (pinned ? " on" : ""),
+                               title: pinned ? "Unpin from the top" : "Pin to the top of the list",
+                               "aria-label": `${pinned ? "Unpin" : "Pin"} ${titleCase(group.key)}`,
+                               "aria-pressed": String(pinned), onclick: () => togglePin(group.key) }, "📌");
+    if (group.members.length === 1) {
+      const voice = group.members[0];
+      const row = el("li", { class: cls("") }, [voiceButton(voice, voice, reading), pin]);
+      row.addEventListener("contextmenu", (e) => showMenu(e, voice, [voice]));
+      rows.push(row);
+      return;
     }
-    const added = state.panel.some((m) => m.voice === voice);
-    return el("li", {}, [
-      el("span", { class: "vname", title: voice }, voice),
-      el("button", { type: "button", class: "small", title: added ? "Already on the panel" : "Add to the panel",
-                     onclick: () => addToPanel(voice) }, added ? "✓" : "+ panel"),
+    const header = el("li", { class: cls("") }, [
+      el("button", { type: "button", class: "vgroup", "aria-expanded": String(open),
+                     title: `${group.members.length} voices — click to ${open ? "close" : "open"}`,
+                     onclick: () => toggleGroup(group.key) }, [
+        el("span", { class: "vchev", "aria-hidden": "true" }, open ? "▾" : "▸"),
+        el("span", { class: "vname" }, titleCase(group.key)),
+        el("span", { class: "vcount" }, String(group.members.length)),
+        el("span", { class: "vcheck", "aria-hidden": "true" },
+           reading && !open && group.members.includes(article.voice) ? "✓" : ""),
+        ...looseDot(group.members),
+      ]),
+      pin,
     ]);
-  }));
-  if (!shown.length) list.append(el("li", { class: "empty" }, voices.length ? "No match" : "No voices found"));
+    header.addEventListener("contextmenu", (e) => showMenu(e, titleCase(group.key), group.members));
+    rows.push(header);
+    if (open) {
+      for (const voice of group.members) {
+        const row = el("li", { class: cls(" vchild") }, voiceButton(voice, variantOf(voice, group.key), reading));
+        row.addEventListener("contextmenu", (e) => showMenu(e, voice, [voice]));
+        rows.push(row);
+      }
+    }
+  });
+  list.replaceChildren(...rows);
+  if (!rows.length) list.append(el("li", { class: "empty" }, voices.length ? "No match" : "No voices found"));
   // Keep the reader's ✓ in sight (scrolling only the list, not the page).
-  const chosen = reading && list.querySelector('[aria-checked="true"]');
+  const mark = list.querySelector('[aria-checked="true"], .vgroup .vcheck:not(:empty)');
+  const chosen = reading && mark && mark.closest("li");
   if (chosen) {
     const box = list.getBoundingClientRect();
     const row = chosen.getBoundingClientRect();
@@ -1150,9 +1306,18 @@ function paraNode(para) {
   });
   text.addEventListener("blur", () => commitParagraph(id));
   // Enter: split into a new paragraph at the caret. Alt+Enter: a new empty paragraph below.
-  // Shift+Enter: a line break inside this one. Ctrl+Enter: play it.
+  // Shift+Enter: a line break inside this one. Ctrl+Enter: play it. Backspace at the very
+  // start: join this paragraph onto the end of the one above.
   text.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || e.isComposing) return;
+    if (e.isComposing) return;
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (window.getSelection().isCollapsed && caretOffset(text) === 0 && paraIndex(id) > 0) {
+        e.preventDefault();
+        mergeIntoPrevious(id);
+      }
+      return;
+    }
+    if (e.key !== "Enter") return;
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); commitParagraph(id); read(id, true); }
     else if (e.altKey) { e.preventDefault(); addParagraphAfter(id); }
     else if (!e.shiftKey) { e.preventDefault(); splitAtCaret(id); }
@@ -1233,11 +1398,31 @@ function addParagraphAfter(id) {
   focusParagraph(fresh.id);
 }
 
-function focusParagraph(id) {
+// Backspace at the very start: this paragraph joins the end of the one above (with a space
+// between them, since they're sentences), and the caret lands where they meet.
+function mergeIntoPrevious(id) {
+  const index = paraIndex(id);
+  if (index < 1) return;
+  const node = paraNodes.get(id);
+  const above = article.paras[index - 1];
+  const tail = (node ? node.text.innerText : article.paras[index].text)
+    .replace(/\r\n?/g, "\n").replace(/^\s+/, "");
+  const head = above.text.replace(/\s+$/, "");
+  const join = head && tail ? " " : "";
+  above.text = head + join + tail;
+  article.paras.splice(index, 1);
+  save();
+  renderArticle();
+  focusParagraph(above.id, head.length + join.length);
+}
+
+function focusParagraph(id, at = 0) {
   const target = paraNodes.get(id).text;
   target.focus();
   const caret = document.createRange();
-  caret.setStart(target, 0);
+  const first = target.firstChild;
+  if (first && first.nodeType === Node.TEXT_NODE) caret.setStart(first, Math.min(at, first.length));
+  else caret.setStart(target, 0);
   caret.collapse(true);
   window.getSelection().removeAllRanges();
   window.getSelection().addRange(caret);
