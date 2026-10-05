@@ -190,6 +190,9 @@
   .para.sent .pbody::before { content: "up next"; display: block; font-size: .72rem;
                               color: var(--warn); margin: 0 .4rem .1rem; }
   .para.resume .num::before { content: "▸ "; color: var(--accent); }
+  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+  #ear.busy { border-color: var(--warn); color: var(--warn); }
+  #article.rewriting #raw, #article.rewriting #paras { opacity: .55; }
 
   /* rendering */
   .overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center;
@@ -201,6 +204,15 @@
   .bar { height: .5rem; border-radius: 999px; background: var(--field); overflow: hidden; }
   #render-bar { height: 100%; width: 0; background: var(--accent); transition: width .5s; }
   #render-cancel { justify-self: end; }
+  .linkish { background: none; border: none; padding: 0; color: var(--muted); font-size: inherit;
+             text-decoration: underline; cursor: pointer; }
+  .linkish:hover { color: var(--text); }
+  .help { width: min(34rem, calc(100% - 2rem)); background: var(--panel); color: var(--text);
+          border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; line-height: 1.5; }
+  .help::backdrop { background: rgba(8, 10, 14, .72); }
+  .help h3 { margin: 0 0 .6rem; font-size: 1.05rem; }
+  .help p { margin: 0 0 .8rem; font-size: .9rem; }
+  .help form { display: flex; justify-content: flex-end; margin: 0; }
 
   body.not-ready .speaks { opacity: .55; }
   .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
@@ -301,16 +313,34 @@
     <textarea id="raw" aria-label="Article text"
       placeholder="Paste an article here (Markdown is fine). Blank lines separate the paragraphs."></textarea>
     <div id="paras" aria-label="Article paragraphs"></div>
-    <div class="hint">Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
-      ▶ read on from here (Ctrl+click it for just that one) · ⟳ play just this one (Ctrl+Enter);
-      while it's reading, either one goes next.
-      Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one,
-      Backspace at the very start joins it onto the one above, and ↑ ↓ step into the paragraph above or below.
-      Pick who reads in the Voices column — shift-click a second voice and the paragraphs are shared out between them.
-      The name under ¶ picks who reads that one paragraph;
-      a [voice] switch typed in the text carries on until the next one.</div>
+    <div class="hint foot">
+      <button id="help-open" type="button" class="linkish">How to edit and read ›</button>
+      <span class="spacer"></span>
+      <button id="ear-undo" type="button" class="linkish" hidden></button>
+      <button id="ear" type="button" class="small"
+              title="Rewrite it the way it's said out loud, not the way it's written (Claude, a minute or so). ↶ puts it back.">👂 For the ear</button>
+    </div>
   </section>
 </main>
+
+<dialog id="help" class="help" aria-labelledby="help-title">
+  <h3 id="help-title">Editing and reading</h3>
+  <p>Click a paragraph to edit it: Jarvis picks up your changes when it gets there. Hover for
+    ▶ read on from here (Ctrl+click it for just that one) · ⟳ play just this one (Ctrl+Enter);
+    while it's reading, either one goes next.</p>
+  <p>Enter splits a paragraph at the caret, Alt+Enter adds an empty one below, Shift+Enter is a line break inside one,
+    Backspace at the very start joins it onto the one above, and ↑ ↓ step into the paragraph above or below.</p>
+  <p>Pick who reads in the Voices column — shift-click a second voice and the paragraphs are shared out between them.
+    The name under ¶ picks who reads that one paragraph;
+    a [voice] switch typed in the text carries on until the next one.</p>
+  <p>👂 For the ear has Claude rewrite the article the way it's said rather than written: contractions,
+    a comma where a full stop would make the voice stop and drop, a new paragraph where you'd take a beat,
+    symbols spelled out, and (asides), which the voice would read as sound effects, turned into spoken ones.
+    Your words and your marks stay, and each paragraph keeps its reader. Click it again to cancel.
+    Afterwards ↶ puts your original back and ↷ swaps the rewrite in again.
+    What it's told to do is in scripts/for_the_ear.txt.</p>
+  <form method="dialog"><button type="submit">Got it</button></form>
+</dialog>
 
 <div id="rendering" class="overlay" hidden>
   <div class="overlay-box" role="alertdialog" aria-labelledby="render-title" aria-describedby="render-detail">
@@ -445,6 +475,7 @@ $("#quit").addEventListener("click", async () => {
 });
 document.addEventListener("keydown", (e) => {
   if (!$("#rendering").hidden) return;      // the page waits while Jarvis renders
+  if ($("#help").open) return;              // Esc just closes the help
   if (e.key === "Escape") stopReading();
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
     e.preventDefault();
@@ -1214,6 +1245,7 @@ const paraIndex = (id) => paraIndexIn(article, id);
 const paraNodes = new Map();     // paragraph id -> its elements, reused across renders
 const reader = { doc: null, active: false, run: 0, currentId: 0, next: null, pauseAfter: false,
                  sentId: 0, warned: new Set(), read: new Set(), stopping: null };
+const ear = { doc: null, abort: null, got: 0, of: 1 };   // For the ear, while it's rewriting
 let rawMode = !article.paras.length;
 let caretPara = 0;          // the paragraph the caret was last in
 let saveTimer;
@@ -1304,6 +1336,7 @@ function closeArticle(id) {
   const doc = state.articles.find((d) => d.id === id);
   if (!doc) return;
   if (reader.active && reader.doc === doc) stopReading();
+  if (ear.doc === doc) ear.abort.abort();
   syncArticles();                        // its file catches up before the tab goes
   state.articles = state.articles.filter((d) => d !== doc);
   if (!state.articles.length) state.articles = [cleanDoc({})];
@@ -1350,6 +1383,7 @@ async function deleteArticle() {
   const label = docTitle(article) || "Untitled";
   if (!confirm(`Delete "${label}"? Its file in articles/ goes too.`)) return;
   if (reader.active && reader.doc === article) stopReading();
+  if (ear.doc === article) ear.abort.abort();
   if (article.fileId) await api("/api/articles/delete", { id: article.fileId }).catch(() => {});
   const gone = article;
   state.articles = state.articles.filter((d) => d !== gone);
@@ -1618,6 +1652,11 @@ function renderArticle() {
   $("#raw").hidden = !rawMode;
   $("#paras").hidden = rawMode;
   $("#edit-all").textContent = rawMode ? "Done" : "Edit as text";
+  const rewriting = ear.doc === article;        // its text waits until For the ear is done
+  $("#article").classList.toggle("rewriting", rewriting);
+  $("#raw").readOnly = rewriting;
+  $("#paras").inert = rewriting;
+  $("#edit-all").disabled = rewriting;
   const list = $("#paras");
   for (const [id, node] of [...paraNodes]) {
     if (paraIndex(id) < 0) { node.row.remove(); paraNodes.delete(id); }
@@ -1656,6 +1695,7 @@ function paintArticle() {
     : start > 0 ? `▶ Read from ¶${start + 1}` : "▶ Read";
   $("#read-stop").disabled = !reader.active;
   $("#read-top").hidden = reading || start <= 0;
+  paintEar();
 }
 
 // The name under ¶N: who reads this paragraph, and a menu to change it for this one only.
@@ -1867,6 +1907,7 @@ $("#read").addEventListener("click", () => {
     if (reader.pauseAfter && queued >= 0) toast(`Pausing after ¶${queued + 1}: it's already on its way`);
     return paintArticle();
   }
+  if (ear.doc === article) return toast("It's being rewritten for the ear: wait for that, or cancel it");
   if (rawMode) setRaw(false);
   const start = article.paras[Math.max(paraIndex(article.resumeId), 0)];
   if (start) read(start.id);
@@ -1875,18 +1916,24 @@ $("#read").addEventListener("click", () => {
 $("#read-top").addEventListener("click", () => { article.resumeId = 0; save(); paintArticle(); });
 $("#read-stop").addEventListener("click", stopReading);
 
+// The article's paragraphs for `text`: a paragraph that's still word for word the same keeps
+// its place in the reading and its reader.
+function textToParas(doc, text) {
+  const unchanged = new Map(doc.paras.map((p) => [p.text, p]));
+  return splitParagraphs(text).map((part) => {
+    const kept = unchanged.get(part);
+    unchanged.delete(part);
+    return kept || newPara(part);
+  });
+}
+
 // "Edit as text": the whole article in one box, for big edits and pasting.
 function setRaw(on) {
   const raw = $("#raw");
   if (on) {
     raw.value = article.paras.map((p) => p.text).join("\n\n");
   } else {
-    const unchanged = new Map(article.paras.map((p) => [p.text, p]));
-    article.paras = splitParagraphs(raw.value).map((text) => {
-      const kept = unchanged.get(text);
-      unchanged.delete(text);
-      return kept || newPara(text);
-    });
+    article.paras = textToParas(article, raw.value);
     save();
   }
   rawMode = on || !article.paras.length;
@@ -1897,6 +1944,147 @@ $("#edit-all").addEventListener("click", () => setRaw(!rawMode));
 $("#raw").addEventListener("paste", () => {
   if (!$("#raw").value.trim()) setTimeout(() => setRaw(false), 0);   // just paste and go
 });
+$("#raw").addEventListener("input", paintEar);
+
+// ---- For the ear ------------------------------------------------------------------------
+// Claude rewrites the article the way it's said rather than written (scripts/for_the_ear.txt
+// has its brief). Each paragraph comes back to its own place, split up if it wants a beat
+// in it, so it keeps its reader. The article it's rewriting waits, and ↶ / ↷ swap between
+// the original and the rewrite for as long as the text is still one or the other.
+// Each paragraph of a version has a key: the original's are 0, 1, 2, ...; in the rewrite,
+// what came back for paragraph 2 is 2, then 2.1, 2.2 for the beats it was split at.
+const version = (para, key) => ({ text: para.text, ...(para.voice ? { voice: para.voice } : {}),
+                                  ...(key != null ? { key } : {}) });
+const sameTexts = (a, b) => a.length === b.length && a.every((text, i) => text === b[i].text);
+const shownTexts = () => (rawMode ? splitParagraphs($("#raw").value) : article.paras.map((p) => p.text));
+// Which version is on screen: "after" (the rewrite), "before" (the original), or "" (edited since).
+function earShowing() {
+  const versions = article.earUndo;
+  if (!versions) return "";
+  const now = shownTexts();
+  return sameTexts(now, versions.after) ? "after" : sameTexts(now, versions.before) ? "before" : "";
+}
+
+async function forTheEar() {
+  if (ear.doc) return ear.abort.abort();              // a second click cancels
+  if (reader.active && reader.doc === article) return toast("Stop reading first: the paragraphs are about to change");
+  if (rawMode) {                                      // the box is the article: take it as it stands
+    article.paras = textToParas(article, $("#raw").value);
+    save();
+  }
+  const doc = article;
+  const sent = doc.paras.filter((p) => p.text.trim());
+  if (!sent.length) return toast("Paste an article first");
+  const before = doc.paras.map((p, i) => version(p, String(i)));
+  Object.assign(ear, { doc, abort: new AbortController(), got: 0,
+                       of: sent.reduce((n, p) => n + p.text.length + 6, 0) });   // + its ¶ line
+  renderArticle();
+  try {
+    const result = await earStream(sent.map((p) => p.text), ear.abort.signal);
+    let note = "";
+    let after;
+    if (result.paras) {
+      const back = new Map(sent.map((p, i) => [p.id, result.paras[i]]));
+      const changed = sent.filter((p, i) => result.paras[i].join("\n\n") !== p.text).length;
+      after = [];
+      doc.paras = doc.paras.flatMap((para, i) => {
+        const own = para.voice ? { voice: para.voice } : {};      // a split keeps its reader
+        return (back.get(para.id) || [para.text]).map((text, k) => {
+          after.push(version({ text, ...own }, k ? `${i}.${k}` : String(i)));
+          return k ? { ...newPara(text), ...own } : { ...para, text };
+        });
+      });
+      note = `${changed} of ${sent.length} paragraphs changed`;
+    } else {        // it came back as one piece: line it up by text, like Edit as text does
+      doc.paras = textToParas(doc, result.text);
+      const was = new Map(before.map((p) => [p.text, p.key]));
+      after = doc.paras.map((p) => version(p, was.get(p.text)));
+      if (sent.some((p) => p.voice)) note = "readers picked under ¶ only stayed where a paragraph didn't change";
+    }
+    if (sameTexts(after.map((v) => v.text), before)) {
+      toast("Nothing to change: it already reads the way it's said");
+    } else {
+      doc.earUndo = { before, after };
+      toast(`Rewritten for the ear${note ? ": " + note : ""}. ↶ puts your original back`);
+    }
+    save();
+  } catch (error) {
+    toast(error.name === "AbortError" ? "Cancelled: your text is as it was" : error.message);
+  } finally {
+    Object.assign(ear, { doc: null, abort: null });
+    if (doc === article && rawMode) $("#raw").value = doc.paras.map((p) => p.text).join("\n\n");
+    renderArticle();
+    renderDocs();
+  }
+}
+
+// POST /api/ear and follow what comes back: a line of JSON per piece of the rewrite as it's
+// written (the button shows how far along it is), then the whole of it, or why not.
+async function earStream(paras, signal) {
+  const response = await fetch("/api/ear", {
+    method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paras }),
+  }).catch((error) => {
+    throw error.name === "AbortError" ? error : new Error(OFFLINE.error);
+  });
+  if (!response.ok) {
+    const reply = await response.json().catch(() => ({}));
+    throw new Error(outdated(reply.error) || reply.error || "Couldn't rewrite it");
+  }
+  const stream = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await stream.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+      const msg = JSON.parse(buffer.slice(0, end));
+      buffer = buffer.slice(end + 1);
+      if (msg.error) throw new Error(msg.error);
+      if (msg.done) return msg;
+      ear.got += msg.delta.length;
+      paintEar();
+    }
+  }
+  throw new Error("The rewrite stopped partway, so your text is as it was");
+}
+
+function paintEar() {
+  const button = $("#ear");
+  const busy = Boolean(ear.doc);
+  button.textContent = busy ? `👂 Rewriting… ${Math.min(99, Math.round((100 * ear.got) / ear.of))}%` : "👂 For the ear";
+  button.classList.toggle("busy", busy);
+  button.setAttribute("aria-label", busy ? "Cancel the rewrite" : "For the ear");
+  if (busy) button.title = `Rewriting “${docTitle(ear.doc) || "Untitled"}” — click to cancel`;
+  else button.title = button.dataset.title || (button.dataset.title = button.title);
+  const swap = $("#ear-undo");
+  const showing = busy ? "" : earShowing();
+  swap.hidden = !showing;
+  swap.textContent = showing === "after" ? "↶ back to my original" : "↷ back to the ear version";
+}
+
+// ↶ / ↷: swap the other version in. A paragraph stays the same paragraph (its place in the
+// reading included) whichever version of its words is showing.
+$("#ear-undo").addEventListener("click", () => {
+  const showing = earShowing();
+  if (!showing) return paintEar();                     // edited since: neither one any more
+  const { before, after } = article.earUndo;
+  const [from, to] = showing === "after" ? [after, before] : [before, after];
+  if (rawMode) article.paras = textToParas(article, $("#raw").value);
+  const ids = new Map();                               // on screen, paragraph n is from[n]
+  from.forEach((v, n) => { if (v.key != null) ids.set(v.key, article.paras[n].id); });
+  const used = new Set();
+  article.paras = to.map(({ text, voice, key }) => {
+    let id = key != null ? ids.get(key) : undefined;
+    if (id == null || used.has(id)) id = ++paraSeq;
+    used.add(id);
+    return { id, text, ...(voice ? { voice } : {}) };
+  });
+  if (rawMode) $("#raw").value = article.paras.map((p) => p.text).join("\n\n");
+  save();
+  renderArticle();
+});
+$("#ear").addEventListener("click", forTheEar);
 
 $("#article-copy").addEventListener("click", async () => {
   const text = rawMode ? $("#raw").value : articleScript();
@@ -1942,6 +2130,12 @@ $("#article-render").addEventListener("click", () => {
                                     my_breaths: article.myBreaths, rate: article.rate,
                                     name: (articleTitle() || "article") + part });
 });
+$("#help-open").addEventListener("click", () => $("#help").showModal());
+$("#help").addEventListener("click", (e) => {    // a click on the backdrop closes it
+  const r = e.currentTarget.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close();
+});
+
 $("#render-range").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); $("#article-render").click(); }
 });

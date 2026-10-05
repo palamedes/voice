@@ -15,9 +15,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -39,6 +41,14 @@ OUTPUT = Path(os.environ.get("JARVIS_OUTPUT") or ROOT / "output")
 POSTS = Path(os.environ.get("JARVIS_POSTS") or ROOT / "posts")
 # The articles open on the page: one JSON each, saved as you type (JARVIS_ARTICLES moves it).
 ARTICLES = Path(os.environ.get("JARVIS_ARTICLES") or ROOT / "articles")
+# For the ear: Claude rewrites an article the way it's said rather than written, through the
+# claude command and the login Claude Code already has. The brief is read fresh every time,
+# so it can be tuned without a restart.
+EAR_BRIEF = ROOT / "scripts" / "for_the_ear.txt"
+EAR_MODEL = "claude-opus-5-5"
+EAR_EFFORT = "medium"       # low left too many full stops; ~40 s for a 1,000-word post
+EAR_TIMEOUT = 300
+SECTION = re.compile(r"^[ \t]*¶(\d+)[ \t]*$", re.M)
 
 
 def slug(name: str) -> str:
@@ -268,9 +278,138 @@ def swap_voice(old: str, new: str) -> int:
     return changed
 
 
+def claude_command() -> str | None:
+    """The claude command (Claude Code), even if this server was started without it on PATH."""
+    return shutil.which("claude") or shutil.which("claude", path=str(Path.home() / ".local" / "bin"))
+
+
+# An em dash, a spaced en dash or a double hyphen (not a hyphen, a 1990–2000 range or a --- rule).
+DASH = re.compile(r"[ \t]*(?:—|(?<=[ \t])–(?=[ \t])|(?<!-)--(?!-))[ \t]*")
+CLOSES = re.compile(r"""[.,;:!?…)\]”’]|"(?=\s|$|[.,;:!?…])""")    # punctuation a dash can't come before
+OPENS = re.compile(r"""(?:[(\[“‘]|(?:^|\s)")$""")                   # ...or come after
+
+
+def dashes_to_commas(text: str) -> str:
+    """Every dash becomes a comma, the beat it is when spoken (Claude is asked for this, but
+    likes its dashes). One next to other punctuation, or at either end of a line, just goes."""
+    def line(words: str) -> str:
+        pieces = DASH.split(words)
+        out = pieces[0]
+        for piece in pieces[1:]:
+            if not out.strip() or not piece.strip() or CLOSES.match(piece) or OPENS.search(out):
+                out += piece                 # "— Mark Twain", "I was going to—", "word—.", "(—next"
+            elif re.search(r"[,;:]$", out):
+                out += " " + piece           # "word, — next"
+            else:
+                out += ", " + piece
+        return out
+    return "\n".join(line(words) for words in text.split("\n"))
+
+
+def ear_sections(paras: list[str]) -> str:
+    """The paragraphs as numbered sections (¶1, ¶2, ...), so each comes back to its own place."""
+    return "\n\n".join(f"¶{i}\n{text.strip()}" for i, text in enumerate(paras, 1))
+
+
+def ear_parse(reply: str, paras: list[str]) -> list[list[str]] | None:
+    """What each paragraph became (one or more paragraphs), or None if the ¶ lines didn't all
+    come back, in order. A section that came back empty keeps its paragraph as it was."""
+    marks = list(SECTION.finditer(reply))
+    if [int(m.group(1)) for m in marks] != list(range(1, len(paras) + 1)) or reply[:marks[0].start()].strip():
+        return None
+    ends = [m.start() for m in marks[1:]] + [len(reply)]
+    sections = []
+    for mark, end, original in zip(marks, ends, paras):
+        parts = [p.strip() for p in re.split(r"\n[ \t]*\n", reply[mark.end():end].strip()) if p.strip()]
+        sections.append(parts or [original])
+    return sections
+
+
+def ear_reply(paras: list[str], reply: str, result: dict, problem: str) -> dict:
+    """The last line of a For the ear stream: the rewrite, or why there isn't one."""
+    if not result:
+        return {"error": problem or "claude stopped without an answer"}
+    if result.get("is_error") or result.get("subtype") != "success":
+        return {"error": "claude: " + str(result.get("result") or result.get("subtype") or "failed")[:300]}
+    if result.get("stop_reason") == "max_tokens":
+        return {"error": "It ran out of room partway through, so your text is as it was"}
+    if result.get("stop_reason") == "refusal":
+        return {"error": "Claude wouldn't rewrite this one"}
+    reply = str(result.get("result") or reply)
+    bare = re.sub(r"¶\d+", "", reply)
+    # Never swap a cut-down version in for the article.
+    if len(bare.split()) < 0.6 * sum(len(p.split()) for p in paras):
+        return {"error": "Claude's version came back much shorter than yours, so your text is as it was"}
+    sections = ear_parse(reply, paras)
+    if sections is None:     # the ¶ lines got lost: the page lines the text up as best it can
+        return {"done": True, "text": dashes_to_commas(bare.strip())}
+    return {"done": True, "paras": [[dashes_to_commas(p) for p in parts] for parts in sections]}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # keep the terminal quiet
+
+    def stream_ear(self, claude: str, brief: str, paras: list[str]):
+        """Run Claude on the paragraphs and stream its rewrite back as it's written: a JSON line
+        per piece ({"delta": ...}), then {"done": true, "paras": [[...], ...]} (or "text", if
+        the sections got muddled), or {"error": ...}. The page going away stops Claude."""
+        problem = tempfile.TemporaryFile()
+        proc = subprocess.Popen(
+            [claude, "-p", "--model", EAR_MODEL, "--effort", EAR_EFFORT, "--system-prompt", brief,
+             "--tools", "", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
+             "--output-format", "stream-json", "--verbose", "--include-partial-messages"],
+            # Away from the project, so no project memory or settings ride along.
+            cwd=tempfile.gettempdir(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=problem,
+            text=True, encoding="utf-8")
+        late = threading.Event()
+
+        def give_up():
+            late.set()
+            proc.kill()
+        timer = threading.Timer(EAR_TIMEOUT, give_up)
+        timer.daemon = True
+        timer.start()
+
+        def send(obj):
+            self.wfile.write((json.dumps(obj) + "\n").encode("utf-8"))
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            try:
+                proc.stdin.write(ear_sections(paras))
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass        # claude quit before reading it; why comes below
+            text, result = [], {}
+            for line in proc.stdout:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "result":
+                    result = event
+                elif event.get("type") == "stream_event":
+                    step = event.get("event") or {}
+                    delta = step.get("delta") or {}
+                    if step.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                        text.append(delta["text"])
+                        send({"delta": delta["text"]})
+            proc.wait()
+            problem.seek(0)
+            why = f"Claude took more than {EAR_TIMEOUT // 60} minutes" if late.is_set() \
+                else problem.read().decode("utf-8", "replace").strip()[-300:]
+            send(ear_reply(paras, "".join(text), result, why))
+        except (BrokenPipeError, ConnectionResetError):
+            pass            # the page cancelled, or closed
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            problem.close()
 
     def send_json(self, obj, status=200):
         data = json.dumps(obj).encode("utf-8")
@@ -471,6 +610,19 @@ class Handler(BaseHTTPRequestHandler):
             path.write_text(text + "\n", encoding="utf-8")
             shown = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
             self.send_json({"ok": True, "file": str(shown), "id": path.stem, "replaced": replacing})
+        elif self.path == "/api/ear":
+            # For the ear: the article's paragraphs, rewritten the way they're said out loud.
+            paras = [p for p in (body.get("paras") or []) if isinstance(p, str) and p.strip()]
+            if not paras:
+                return self.send_json({"ok": False, "error": "nothing to rewrite"}, 400)
+            claude = claude_command()
+            if not claude:
+                return self.send_json({"ok": False, "error": "can't find the claude command (Claude Code)"}, 503)
+            try:
+                brief = EAR_BRIEF.read_text(encoding="utf-8")
+            except OSError:
+                return self.send_json({"ok": False, "error": f"can't read {EAR_BRIEF.relative_to(ROOT)}"}, 500)
+            self.stream_ear(claude, brief, paras)
         elif self.path == "/api/articles/save":
             name = str(body.get("name") or "").strip()
             # Keeps the file it already has; renaming changes the name inside it, not the file.
